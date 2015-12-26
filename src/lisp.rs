@@ -18,10 +18,6 @@ type Env = HashMap<String, Val>;
 
 pub fn run() {
     let mut global_env = standard_env();
-
-    // read_eval_print("(define r 10)", &mut global_env);
-    // read_eval_print("(* pi (* r r))", &mut global_env);
-    // read_eval_print("(begin (define r 10) (* pi (* r r)))", &mut global_env);
     read_eval_print_loop(&mut global_env);
 }
 

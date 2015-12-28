@@ -10,7 +10,43 @@ enum Val {
     Symbol(String),
 }
 
-type Env = HashMap<String, Val>;
+// type Env = HashMap<String, Val>;
+
+struct Env {
+    vars: HashMap<String, Val>,
+    parent: Option<Box<Env>>,
+}
+
+impl Env {
+    fn new(parent: Option<Box<Env>>) -> Env {
+        let mut vars: HashMap<String, Val> = HashMap::new();
+        Env {
+            vars: vars,
+            parent: parent,
+        }
+    }
+
+    fn access(&self, var_name: &String) -> Val {
+        match self.vars.get(var_name) {
+            Some(x) => x.clone(),
+            None => panic!("can't access undefined variable {}", var_name),
+        }
+    }
+
+    fn define(&mut self, var_name: &String, val: Val) {
+        match self.vars.insert(var_name.to_owned(), val) {
+            Some(x) => panic!("can't define variable {}, already defined in this scope", var_name),
+            None => (),
+        }
+    }
+
+    fn assign(&mut self, var_name: &String, val: Val) {
+        match self.vars.get_mut(var_name) {
+            Some(x) => { *x = val; },
+            None => panic!("can't assign to undefined variable {}", var_name),
+        }
+    }
+}
 
 // lifetimes:
 // expressions are consumed by eval
@@ -32,7 +68,9 @@ fn read_eval_print_loop(mut env: &mut Env) {
             .ok()
             .expect("Failed to read line");
 
-        read_eval_print(input.trim(), &mut env);
+        let mut current_frame_env = Env::new(env)
+
+        read_eval_print(input.trim(), &mut current_frame_env);
     }
 }
 
@@ -144,8 +182,9 @@ fn symbol_false() -> Val {
 }
 
 fn standard_env() -> Env {
-    let mut env: Env = HashMap::new();
-    env.insert("pi".to_string(), Val::Number(consts::PI));
+    let no_parent: Option<Box<Env>> = None;
+    let mut env = Env::new(no_parent);
+    env.define(&("pi".to_string()), Val::Number(consts::PI));
     env
 }
 
@@ -173,7 +212,7 @@ fn standard_env() -> Env {
 fn eval(val: Val, mut env: &mut Env) -> Val {
     // println!("eval {:?}", &val);
     let result = match val {
-        Val::Symbol(x) => access_variable(x, &mut env),
+        Val::Symbol(x) => env.access(&x),
         Val::Number(_) => val,
         Val::List(list) => {
             let mut args = list;
@@ -199,7 +238,7 @@ fn eval(val: Val, mut env: &mut Env) -> Val {
                                 _ => panic!("first arg to define must be a symbol"),
                             };
                             let exp_result = eval(exp, &mut env);
-                            env.insert(var_name, exp_result);
+                            env.define(&var_name, exp_result);
                             symbol_false()
                         },
                         // otherwise, call procedure
@@ -215,13 +254,6 @@ fn eval(val: Val, mut env: &mut Env) -> Val {
     };
     // println!("eval result {:?}", &result);
     result
-}
-
-fn access_variable(var_name: String, env: &Env) -> Val {
-    match env.get(&var_name) {
-         Some(x) => x.clone(),
-         None => panic!("undefined variable {}", var_name),
-     }
 }
 
 fn call_proc(proc_name: &String, mut args: Vec<Val>) -> Val {

@@ -2,26 +2,62 @@ use std::collections::HashMap;
 use std::f64::consts;
 use std::io;
 use std::io::prelude::*;
+use std::rc::Rc;
 
 #[derive(Debug,Clone)]
 enum Val {
     List(Vec<Val>),
     Number(f64),
     Symbol(String),
+    // Callable(Proc),
 }
 
-// type Env = HashMap<String, Val>;
+type EnvRef = Rc<Option<Env>>;
 
+#[derive(Debug,Clone)]
+struct Proc {
+    params: Vec<Val>,
+    body: Val,
+    env: EnvRef,
+}
+
+impl Proc {
+    fn new(params: Vec<Val>, body: Val, env: EnvRef) -> Proc {
+        Proc {
+            params: params,
+            body: body,
+            env: env,
+        }
+    }
+
+    fn call(&self, args: Vec<Val>) -> Val {
+        if args.len() != self.params.len() {
+            panic!("incorrect number of args for func, expected {}, got {}", self.params.len(), args.len());
+        } else {
+            let mut local_env = Env::new(self.env.clone());
+            for i in 0..self.params.len() {
+                let param_name = match self.params[i] {
+                    Val::Symbol(ref x) => x.clone(),
+                    _ => panic!("param names must be symbols"),
+                };
+                local_env.define(&param_name, args[0].clone()); // TODO: optimise
+            }
+            let local_env_ref: EnvRef = Rc::new(Some(local_env));
+            eval(self.body.clone(), local_env_ref)
+        }
+    }
+}
+
+#[derive(Debug,Clone)]
 struct Env {
     vars: HashMap<String, Val>,
-    parent: Option<Box<Env>>,
+    parent: EnvRef,
 }
 
 impl Env {
-    fn new(parent: Option<Box<Env>>) -> Env {
-        let mut vars: HashMap<String, Val> = HashMap::new();
+    fn new(parent: EnvRef) -> Env {
         Env {
-            vars: vars,
+            vars: HashMap::new(),
             parent: parent,
         }
     }
@@ -29,13 +65,18 @@ impl Env {
     fn access(&self, var_name: &String) -> Val {
         match self.vars.get(var_name) {
             Some(x) => x.clone(),
-            None => panic!("can't access undefined variable {}", var_name),
+            None => {
+                match *self.parent {
+                    Some(ref parent) => parent.access(&var_name),
+                    None => panic!("can't access undefined variable '{}'", var_name),
+                }
+            },
         }
     }
 
     fn define(&mut self, var_name: &String, val: Val) {
         match self.vars.insert(var_name.to_owned(), val) {
-            Some(x) => panic!("can't define variable {}, already defined in this scope", var_name),
+            Some(_) => panic!("can't define variable '{}', already defined in this scope", var_name),
             None => (),
         }
     }
@@ -43,7 +84,7 @@ impl Env {
     fn assign(&mut self, var_name: &String, val: Val) {
         match self.vars.get_mut(var_name) {
             Some(x) => { *x = val; },
-            None => panic!("can't assign to undefined variable {}", var_name),
+            None => panic!("can't assign to undefined variable '{}'", var_name),
         }
     }
 }
@@ -53,11 +94,11 @@ impl Env {
 // vals are copied when storing to and accessing from the environment
 
 pub fn run() {
-    let mut global_env = standard_env();
-    read_eval_print_loop(&mut global_env);
+    let global_env = standard_env();
+    read_eval_print_loop(global_env);
 }
 
-fn read_eval_print_loop(mut env: &mut Env) {
+fn read_eval_print_loop(env: EnvRef) -> ! {
     loop {
         print!("lisp.rs> ");
         io::stdout().flush().unwrap();
@@ -68,14 +109,12 @@ fn read_eval_print_loop(mut env: &mut Env) {
             .ok()
             .expect("Failed to read line");
 
-        let mut current_frame_env = Env::new(env)
-
-        read_eval_print(input.trim(), &mut current_frame_env);
+        read_eval_print(input.trim(), env.clone());
     }
 }
 
-fn read_eval_print(program: &str, mut env: &mut Env) {
-    let program_result = eval(parse(program), &mut env);
+fn read_eval_print(program: &str, env: EnvRef) {
+    let program_result = eval(parse(program), env.clone());
     print!("=> ");
     print_val(&program_result);
 }
@@ -181,11 +220,11 @@ fn symbol_false() -> Val {
     Val::Symbol("#f".to_string())
 }
 
-fn standard_env() -> Env {
-    let no_parent: Option<Box<Env>> = None;
-    let mut env = Env::new(no_parent);
+fn standard_env() -> EnvRef {
+    let null_env_ref: EnvRef = Rc::new(None);
+    let mut env = Env::new(null_env_ref);
     env.define(&("pi".to_string()), Val::Number(consts::PI));
-    env
+    Rc::new(Some(env))
 }
 
 // def eval(x, env=global_env):
@@ -209,10 +248,10 @@ fn standard_env() -> Env {
 //         args = [eval(arg, env) for arg in x[1:]]
 //         return proc(*args)
 
-fn eval(val: Val, mut env: &mut Env) -> Val {
+fn eval(val: Val, env: EnvRef) -> Val {
     // println!("eval {:?}", &val);
     let result = match val {
-        Val::Symbol(x) => env.access(&x),
+        Val::Symbol(x) => Rc::try_unwrap(env).unwrap().unwrap().access(&x),
         Val::Number(_) => val,
         Val::List(list) => {
             let mut args = list;
@@ -226,24 +265,34 @@ fn eval(val: Val, mut env: &mut Env) -> Val {
                             let test = args.remove(0);
                             let conseq = args.remove(0);
                             let alt = args.remove(0);
-                            let test_result = eval(test, &mut env);
+                            let test_result = eval(test, env.clone());
                             let exp = if !is_false(test_result) { conseq } else { alt };
-                            eval(exp, &mut env)
+                            eval(exp, env.clone())
                         },
+                        // "lambda" => {
+                        //     let params = match args.remove(0) {
+                        //         Val::List(x) => x,
+                        //         _ => panic!("expected params to be a list"),
+                        //     };
+                        //     let body = args.remove(0);
+                        //     Val::Callable(Proc::new(params, body, env.clone()))
+                        // },
                         "define" => {
                             let var = args.remove(0);
                             let exp = args.remove(0);
                             let var_name = match var {
-                                Val::Symbol(x) => x,
+                                Val::Symbol(ref x) => x,
                                 _ => panic!("first arg to define must be a symbol"),
                             };
-                            let exp_result = eval(exp, &mut env);
-                            env.define(&var_name, exp_result);
+                            let exp_result = eval(exp, env.clone());
+                            Rc::try_unwrap(env).unwrap().unwrap().define(&var_name, exp_result);
                             symbol_false()
                         },
                         // otherwise, call procedure
                         _ => {
-                            let evaluated_args: Vec<Val> = args.iter().map(|arg| eval(arg.clone(), &mut env)).collect();
+                            let evaluated_args: Vec<Val> = args.iter()
+                                .map(|arg| eval(arg.clone(), env.clone()))
+                                .collect();
                             call_proc(&symbol, evaluated_args)
                         },
                     }

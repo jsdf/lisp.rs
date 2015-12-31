@@ -18,7 +18,7 @@ pub enum Val {
     Number(f64),
     Symbol(String),
     List(Vec<Val>),
-    // Callable(Proc),
+    Closure(Closure),
     Intrinsic(Intrinsic),
 }
 
@@ -28,6 +28,13 @@ impl Val {
     fn extract_number(&self) -> EvalResult<f64> {
         match *self {
             Val::Number(x) => Ok(x),
+            ref val => Err(format!("expected a Number, found '{}'", val)),
+        }
+    }
+
+    fn extract_symbol(&self) -> EvalResult<&str> {
+        match *self {
+            Val::Symbol(ref x) => Ok(&x),
             ref val => Err(format!("expected a Number, found '{}'", val)),
         }
     }
@@ -48,24 +55,25 @@ impl fmt::Display for Val {
             Val::Number(x) => write!(f, "{}", x),
             Val::Symbol(ref x) => write!(f, "{}", x),
             Val::List(ref xs) => write!(f, "({})", xs.iter().format(" ", |x, f| f(x))),
+            Val::Closure(ref cl) => write!(f, "(lambda ({}) ...)", cl.params.iter().format(" ", |param, f| f(param))),
             Val::Intrinsic(_) => write!(f, "<intrinsic>"),
         }
     }
 }
 
 #[derive(Debug, Clone)]
-struct Proc {
-    params: Vec<Val>,
-    body: Val,
-    env: Rc<Env>,
+pub struct Closure {
+    params: Vec<String>,
+    body: Box<Val>,
+    parent: Rc<Env>,
 }
 
-impl Proc {
-    fn new(params: Vec<Val>, body: Val, env: Rc<Env>) -> Proc {
-        Proc {
+impl Closure {
+    fn new(params: Vec<String>, body: Val, parent: Rc<Env>) -> Closure {
+        Closure {
             params: params,
-            body: body,
-            env: env,
+            body: Box::new(body),
+            parent: parent,
         }
     }
 
@@ -73,15 +81,11 @@ impl Proc {
         if args.len() != self.params.len() {
             Err(format!("incorrect number of args for func, expected {}, got {}", self.params.len(), args.len()))
         } else {
-            let mut local_env = Env::new(Some(self.env.clone()));
-            for param in &self.params {
-                let param_name = match *param {
-                    Val::Symbol(ref x) => x.clone(),
-                    _ => return Err(format!("param names must be symbols")),
-                };
-                local_env.define(param_name, args[0].clone()); // TODO: optimise
+            let mut local_env = Env::new(Some(self.parent.clone()));
+            for (ident, val) in <_>::zip(self.params.iter(), args.into_iter()) {
+                local_env.define(&ident[..], val);
             }
-            local_env.eval(self.body.clone())
+            local_env.eval((*self.body).clone())
         }
     }
 }
@@ -114,6 +118,9 @@ impl Env {
         env.define("=", Val::Intrinsic(intrinsics::eq));
         env.define("not", Val::Intrinsic(intrinsics::not));
         env.define("list", Val::Intrinsic(intrinsics::list));
+        env.define("id", Val::Closure(Closure::new(vec!["x".to_string()],
+                                                   Val::Symbol("x".to_string()),
+                                                   Rc::new(Env::new(None)))));
         env
     }
 
@@ -135,6 +142,12 @@ impl Env {
             Some(x) => { *x = val; },
             None => panic!("can't assign to undefined variable '{}'", var_name),
         }
+    }
+
+    fn eval_args<I: IntoIterator<Item = Val>>(&mut self, args: I) -> EvalResult<Vec<Val>> {
+        args.into_iter()
+            .map(|arg| self.eval(arg))
+            .fold_results(vec![], |mut acc, x| { acc.push(x); acc })
     }
 
     pub fn eval(&mut self, val: Val) -> EvalResult<Val> {
@@ -159,14 +172,18 @@ impl Env {
                                 let exp = if !test_result.is_false() { conseq } else { alt };
                                 self.eval(exp)
                             },
-                            // "lambda" => {
-                            //     let params = match args.remove(0) {
-                            //         Val::List(x) => x,
-                            //         _ => panic!("expected params to be a list"),
-                            //     };
-                            //     let body = args.remove(0);
-                            //     Val::Callable(Proc::new(params, body, self.clone()))
-                            // },
+                            "lambda" => {
+                                let params = match args.next().unwrap() {
+                                    Val::List(x) => try! {
+                                        x.iter()
+                                            .map(Val::extract_symbol)
+                                            .fold_results(vec![], |mut acc, x| { acc.push(x.to_string()); acc })
+                                    },
+                                    _ => return Err("expected params to be a list".to_string()),
+                                };
+                                let body = args.next().unwrap();
+                                Ok(Val::Closure(Closure::new(params, body, Rc::new(self.clone())))) // Ack!
+                            },
                             "define" => {
                                 let var = args.next().unwrap();
                                 let exp = args.next().unwrap();
@@ -180,22 +197,22 @@ impl Env {
                             },
                             // otherwise, call procedure
                             symbol => {
-                                if let Some(&Val::Intrinsic(f)) = self.access(symbol) {
-                                    args.map(|arg| self.eval(arg))
-                                        .fold_results(vec![], |mut acc, x| { acc.push(x); acc })
-                                        .and_then(f)
-                                } else {
-                                    Err(format!("the function '{}' was not defined", symbol))
+                                let args = try!(self.eval_args(args));
+                                match self.access(symbol) {
+                                    Some(&Val::Closure(ref cl)) => cl.call(args),
+                                    Some(&Val::Intrinsic(f)) => f(args),
+                                    Some(val) => Err(format!("expected '{}' to be a function, but found '{}'", symbol, val)),
+                                    None => Err(format!("the function '{}' was not defined", symbol)),
                                 }
                             },
                         }
                     },
+                    // TODO: anonymous closures
                     Some(_) | None => Err("unknown list form".to_string()),
                 }
             },
-            Val::Intrinsic(f) => {
-                Ok(Val::Intrinsic(f))
-            },
+            Val::Closure(_) => Ok(val),
+            Val::Intrinsic(_) => Ok(val),
         }
     }
 

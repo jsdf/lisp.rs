@@ -62,7 +62,7 @@ impl Env {
         }
     }
 
-    fn access(&self, var_name: &String) -> Val {
+    fn access(&self, var_name: &str) -> Val {
         match self.vars.get(var_name) {
             Some(x) => x.clone(),
             None => {
@@ -74,14 +74,14 @@ impl Env {
         }
     }
 
-    fn define(&mut self, var_name: &String, val: Val) {
+    fn define(&mut self, var_name: &str, val: Val) {
         match self.vars.insert(var_name.to_owned(), val) {
             Some(_) => panic!("can't define variable '{}', already defined in this scope", var_name),
             None => (),
         }
     }
 
-    fn assign(&mut self, var_name: &String, val: Val) {
+    fn assign(&mut self, var_name: &str, val: Val) {
         match self.vars.get_mut(var_name) {
             Some(x) => { *x = val; },
             None => panic!("can't assign to undefined variable '{}'", var_name),
@@ -305,7 +305,7 @@ fn eval(val: Val, env: EnvRef) -> Val {
     result
 }
 
-fn call_proc(proc_name: &String, mut args: Vec<Val>) -> Val {
+fn call_proc(proc_name: &str, mut args: Vec<Val>) -> Val {
     match proc_name.trim() {
         "+" => apply_arithmetic(args, add),
         "-" => apply_arithmetic(args, sub),

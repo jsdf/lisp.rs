@@ -28,42 +28,56 @@ impl From<bool> for Val {
     }
 }
 
+type EvalResult<T> = Result<T, String>;
+
 impl Val {
-    fn extract_number(&self) -> f64 {
+    fn extract_number(&self) -> EvalResult<f64> {
         match *self {
-            Val::Number(x) => x,
-            _ => panic!("expected a Number"),
+            Val::Number(x) => Ok(x),
+            ref val => Err(format!("expected a Number, found '{}'", val)),
         }
     }
 
-    fn extract_symbol(&self) -> &str {
+    fn extract_symbol(&self) -> EvalResult<&str> {
         match *self {
-            Val::Symbol(ref x) => x,
-            _ => panic!("expected a Symbol"),
+            Val::Symbol(ref x) => Ok(x),
+            ref val => Err(format!("expected a Symbol, found '{}'", val)),
         }
     }
 
-    fn gt(a: &Val, b: &Val) -> Val {
-        Val::from(a.extract_number() > b.extract_number())
+    fn gt(a: &Val, b: &Val) -> EvalResult<Val> {
+        let a = try!(a.extract_number());
+        let b = try!(b.extract_number());
+
+        Ok(Val::from(a > b))
     }
 
-    fn lt(a: &Val, b: &Val) -> Val {
-        Val::from(a.extract_number() < b.extract_number())
+    fn lt(a: &Val, b: &Val) -> EvalResult<Val> {
+        let a = try!(a.extract_number());
+        let b = try!(b.extract_number());
+
+        Ok(Val::from(a < b))
     }
 
-    fn gte(a: &Val, b: &Val) -> Val {
-        Val::from(a.extract_number() >= b.extract_number())
+    fn gte(a: &Val, b: &Val) -> EvalResult<Val> {
+        let a = try!(a.extract_number());
+        let b = try!(b.extract_number());
+
+        Ok(Val::from(a >= b))
     }
 
-    fn lte(a: &Val, b: &Val) -> Val {
-        Val::from(a.extract_number() <= b.extract_number())
+    fn lte(a: &Val, b: &Val) -> EvalResult<Val> {
+        let a = try!(a.extract_number());
+        let b = try!(b.extract_number());
+
+        Ok(Val::from(a <= b))
     }
 
-    fn eq(a: &Val, b: &Val) -> Val {
+    fn eq(a: &Val, b: &Val) -> EvalResult<Val> {
         match *a {
-            Val::Symbol(_) => Val::from(a.extract_symbol() == b.extract_symbol()),
-            Val::Number(_) => Val::from(a.extract_number() == b.extract_number()),
-            Val::List(_) => panic!("equality operator not implemented for List :("),
+            Val::Symbol(_) => Ok(Val::from(try!(a.extract_symbol()) == try!(b.extract_symbol()))),
+            Val::Number(_) => Ok(Val::from(try!(a.extract_number()) == try!(b.extract_number()))),
+            Val::List(_) => Err("equality operator not implemented for List :(".to_string()),
         }
     }
 
@@ -107,15 +121,15 @@ impl Proc {
         }
     }
 
-    fn call(&self, args: Vec<Val>) -> Val {
+    fn call(&self, args: Vec<Val>) -> EvalResult<Val> {
         if args.len() != self.params.len() {
-            panic!("incorrect number of args for func, expected {}, got {}", self.params.len(), args.len());
+            Err(format!("incorrect number of args for func, expected {}, got {}", self.params.len(), args.len()))
         } else {
             let mut local_env = Env::new(self.env.clone());
             for param in &self.params {
                 let param_name = match *param {
                     Val::Symbol(ref x) => x.clone(),
-                    _ => panic!("param names must be symbols"),
+                    _ => return Err(format!("param names must be symbols")),
                 };
                 local_env.define(&param_name, args[0].clone()); // TODO: optimise
             }
@@ -191,7 +205,10 @@ fn read_eval_print_loop(env: EnvRef) -> ! {
 }
 
 fn read_eval_print(program: &str, env: EnvRef) {
-    println!("=> {}", eval(parse(program), env.clone()));
+    match eval(parse(program), env.clone()) {
+        Ok(val) => println!("=> {}", val),
+        Err(msg) => println!("error: {}", msg),
+    }
 }
 
 // def tokenize(chars):
@@ -297,11 +314,10 @@ fn standard_env() -> EnvRef {
 //         args = [eval(arg, env) for arg in x[1:]]
 //         return proc(*args)
 
-fn eval(val: Val, env: EnvRef) -> Val {
-    // println!("eval {:?}", &val);
-    let result = match val {
-        Val::Symbol(x) => Rc::try_unwrap(env).unwrap().unwrap().access(&x),
-        Val::Number(_) => val,
+fn eval(val: Val, env: EnvRef) -> EvalResult<Val> {
+    match val {
+        Val::Symbol(x) => Ok(Rc::try_unwrap(env).unwrap().unwrap().access(&x)),
+        Val::Number(_) => Ok(val),
         Val::List(list) => {
             let mut args = list;
             let proc_name = args.remove(0);
@@ -309,12 +325,12 @@ fn eval(val: Val, env: EnvRef) -> Val {
             match proc_name {
                 Val::Symbol(symbol) => {
                     match symbol.trim() {
-                        "quote" => args.remove(0),
+                        "quote" => Ok(args.remove(0)),
                         "if" => {
                             let test = args.remove(0);
                             let conseq = args.remove(0);
                             let alt = args.remove(0);
-                            let test_result = eval(test, env.clone());
+                            let test_result = try!(eval(test, env.clone()));
                             let exp = if !test_result.is_false() { conseq } else { alt };
                             eval(exp, env.clone())
                         },
@@ -331,30 +347,30 @@ fn eval(val: Val, env: EnvRef) -> Val {
                             let exp = args.remove(0);
                             let var_name = match var {
                                 Val::Symbol(ref x) => x,
-                                _ => panic!("first arg to define must be a symbol"),
+                                _ => return Err("first arg to define must be a symbol".to_string()),
                             };
-                            let exp_result = eval(exp, env.clone());
+                            let exp_result = try!(eval(exp, env.clone()));
                             Rc::try_unwrap(env).unwrap().unwrap().define(&var_name, exp_result);
-                            Val::from(false)
+                            Ok(Val::from(false))
                         },
                         // otherwise, call procedure
                         _ => {
-                            let evaluated_args: Vec<Val> = args.iter()
-                                .map(|arg| eval(arg.clone(), env.clone()))
-                                .collect();
+                            let evaluated_args = try! {
+                                args.iter()
+                                    .map(|arg| eval(arg.clone(), env.clone()))
+                                    .fold_results(Vec::with_capacity(args.len()), |mut acc, x| { acc.push(x); acc })
+                            };
                             call_proc(&symbol, evaluated_args)
                         },
                     }
                 },
-                _ => panic!("unknown list form"),
+                _ => Err("unknown list form".to_string()),
             }
         },
-    };
-    // println!("eval result {:?}", &result);
-    result
+    }
 }
 
-fn call_proc(proc_name: &str, mut args: Vec<Val>) -> Val {
+fn call_proc(proc_name: &str, mut args: Vec<Val>) -> EvalResult<Val> {
     match proc_name.trim() {
         "+" => apply_arithmetic(args, f64::add),
         "-" => apply_arithmetic(args, f64::sub),
@@ -365,42 +381,42 @@ fn call_proc(proc_name: &str, mut args: Vec<Val>) -> Val {
         ">=" => apply2(args, Val::gte),
         "<=" => apply2(args, Val::lte),
         "=" => apply2(args, Val::eq),
-        "not" => apply1(args, Val::not),
-        "list" => Val::List(args),
+        "not" => apply1(args, |x| Ok(x.not())),
+        "list" => Ok(Val::List(args)),
         "begin" => {
             match args.pop() {
-                Some(x) => x,
-                None => Val::from(false),
+                Some(x) => Ok(x),
+                None => Ok(Val::from(false)),
             }
         },
-        _ => panic!("unknown proc"),
+        _ => Err(format!("unknown proc '{}'", proc_name)),
     }
 }
 
-fn apply_arithmetic<F: Fn(f64, f64) -> f64>(args: Vec<Val>, operator: F) -> Val {
+fn apply_arithmetic<F: Fn(f64, f64) -> f64>(args: Vec<Val>, operator: F) -> EvalResult<Val> {
     let mut accumulated: f64 = 0f64;
     for (i, arg) in args.iter().enumerate() {
         accumulated = match *arg {
             Val::Number(operand) => {
                 if i == 0 { operand } else { operator(accumulated, operand) }
             },
-            _ => panic!("args to arithmetic functions must be Numbers"),
+            _ => return Err(format!("args to arithmetic functions must be Numbers, found {}", arg)),
         };
-    };
-    Val::Number(accumulated)
+    }
+    Ok(Val::Number(accumulated))
 }
 
-fn apply1<F: Fn(&Val) -> Val>(args: Vec<Val>, func: F) -> Val {
+fn apply1<F: Fn(&Val) -> EvalResult<Val>>(args: Vec<Val>, func: F) -> EvalResult<Val> {
     if args.len() != 1 {
-        panic!("incorrect number of args for func, expected 1, got {}", args.len());
+        Err(format!("incorrect number of args for func, expected 1, got {}", args.len()))
     } else {
         func(&args[0])
     }
 }
 
-fn apply2<F: Fn(&Val, &Val) -> Val>(args: Vec<Val>, func: F) -> Val {
+fn apply2<F: Fn(&Val, &Val) -> EvalResult<Val>>(args: Vec<Val>, func: F) -> EvalResult<Val> {
     if args.len() != 2 {
-        panic!("incorrect number of args for func, expected 2, got {}", args.len());
+        Err(format!("incorrect number of args for func, expected 2, got {}", args.len()))
     } else {
         func(&args[0], &args[1])
     }

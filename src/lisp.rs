@@ -153,16 +153,10 @@ impl Env {
         }
     }
 
-    fn access(&self, var_name: &str) -> Val {
-        match self.vars.get(var_name) {
-            Some(x) => x.clone(),
-            None => {
-                match self.parent {
-                    Some(ref parent) => parent.access(&var_name),
-                    None => panic!("can't access undefined variable '{}'", var_name),
-                }
-            },
-        }
+    fn access(&self, var_name: &str) -> Option<&Val> {
+        self.vars.get(var_name).or_else(|| {
+            self.parent.as_ref().and_then(|parent| parent.access(&var_name))
+        })
     }
 
     fn define(&mut self, var_name: String, val: Val) {
@@ -315,7 +309,10 @@ fn standard_env() -> Env {
 
 fn eval(val: Val, env: &mut Env) -> EvalResult<Val> {
     match val {
-        Val::Symbol(x) => Ok(env.access(&x)),
+        Val::Symbol(x) => match env.access(&x) {
+            Some(value) => Ok(value.clone()),
+            None => Err(format!("can't access undefined variable '{}'", x)),
+        },
         Val::Number(_) => Ok(val),
         Val::List(list) => {
             let mut args = list;

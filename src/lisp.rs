@@ -397,16 +397,10 @@ fn call_proc(proc_name: &str, mut args: Vec<Val>) -> EvalResult<Val> {
 }
 
 fn apply_arithmetic<F: Fn(f64, f64) -> f64>(args: Vec<Val>, operator: F) -> EvalResult<Val> {
-    let mut accumulated: f64 = 0f64;
-    for (i, arg) in args.iter().enumerate() {
-        accumulated = match *arg {
-            Val::Number(operand) => {
-                if i == 0 { operand } else { operator(accumulated, operand) }
-            },
-            _ => return Err(format!("args to arithmetic functions must be Numbers, found {}", arg)),
-        };
-    }
-    Ok(Val::Number(accumulated))
+    args.iter()
+        .map(Val::extract_number)
+        .fold_results(0.0, operator)
+        .map(Val::Number)
 }
 
 fn apply1<F: Fn(&Val) -> EvalResult<Val>>(args: Vec<Val>, func: F) -> EvalResult<Val> {

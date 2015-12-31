@@ -132,7 +132,7 @@ impl Proc {
                     Val::Symbol(ref x) => x.clone(),
                     _ => return Err(format!("param names must be symbols")),
                 };
-                local_env.define(&param_name, args[0].clone()); // TODO: optimise
+                local_env.define(param_name, args[0].clone()); // TODO: optimise
             }
             eval(self.body.clone(), &mut local_env)
         }
@@ -165,9 +165,9 @@ impl Env {
         }
     }
 
-    fn define(&mut self, var_name: &str, val: Val) {
-        match self.vars.insert(var_name.to_owned(), val) {
-            Some(_) => panic!("can't define variable '{}', already defined in this scope", var_name),
+    fn define(&mut self, var_name: String, val: Val) {
+        match self.vars.insert(var_name, val) {
+            Some(var_name) => panic!("can't define variable '{}', already defined in this scope", var_name),
             None => (),
         }
     }
@@ -288,7 +288,7 @@ fn atom(token: String) -> Val {
 
 fn standard_env() -> Env {
     let mut env = Env::new(None);
-    env.define("pi", Val::Number(consts::PI));
+    env.define("pi".to_string(), Val::Number(consts::PI));
     env
 }
 
@@ -345,11 +345,11 @@ fn eval(val: Val, env: &mut Env) -> EvalResult<Val> {
                             let var = args.remove(0);
                             let exp = args.remove(0);
                             let var_name = match var {
-                                Val::Symbol(ref x) => x,
+                                Val::Symbol(name) => name,
                                 _ => return Err("first arg to define must be a symbol".to_string()),
                             };
                             let exp_result = try!(eval(exp, env));
-                            env.define(&var_name, exp_result);
+                            env.define(var_name, exp_result);
                             Ok(Val::from(false))
                         },
                         // otherwise, call procedure

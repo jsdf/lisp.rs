@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::f64::consts;
 use std::io;
 use std::io::prelude::*;
+use std::ops::*;
 use std::rc::Rc;
 
 #[derive(Debug,Clone)]
@@ -362,16 +363,16 @@ fn eval(val: Val, env: EnvRef) -> Val {
 
 fn call_proc(proc_name: &str, mut args: Vec<Val>) -> Val {
     match proc_name.trim() {
-        "+" => apply_arithmetic(args, add),
-        "-" => apply_arithmetic(args, sub),
-        "*" => apply_arithmetic(args, mul),
-        "/" => apply_arithmetic(args, div),
-        ">" => apply2(args, gt),
-        "<" => apply2(args, lt),
-        ">=" => apply2(args, gte),
-        "<=" => apply2(args, lte),
-        "=" => apply2(args, eq),
-        "not" => apply1(args, not),
+        "+" => apply_arithmetic(args, f64::add),
+        "-" => apply_arithmetic(args, f64::sub),
+        "*" => apply_arithmetic(args, f64::mul),
+        "/" => apply_arithmetic(args, f64::div),
+        ">" => apply2(args, Val::gt),
+        "<" => apply2(args, Val::lt),
+        ">=" => apply2(args, Val::gte),
+        "<=" => apply2(args, Val::lte),
+        "=" => apply2(args, Val::eq),
+        "not" => apply1(args, Val::not),
         "list" => Val::List(args),
         "begin" => {
             match args.pop() {

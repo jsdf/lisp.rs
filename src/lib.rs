@@ -14,28 +14,12 @@ pub type Intrinsic = fn(Vec<Val>) -> EvalResult<Val>;
 
 #[derive(Debug, Clone)]
 pub enum Val {
-    List(Vec<Val>),
+    Bool(bool),
     Number(f64),
     Symbol(String),
+    List(Vec<Val>),
     // Callable(Proc),
     Intrinsic(Intrinsic),
-}
-
-impl<'a> From<&'a str> for Val {
-    fn from(x: &'a str) -> Val {
-        Val::Symbol(x.to_string())
-    }
-}
-impl From<f64> for Val {
-    fn from(x: f64) -> Val {
-        Val::Number(x)
-    }
-}
-
-impl From<bool> for Val {
-    fn from(x: bool) -> Val {
-        if x { Val::from("#t") } else { Val::from("#f") }
-    }
 }
 
 pub type EvalResult<T> = Result<T, String>;
@@ -50,7 +34,7 @@ impl Val {
 
     fn is_false(&self) -> bool {
         match *self {
-            Val::Symbol(ref x) => x == "#f",
+            Val::Bool(false) => true,
             _ => false,
         }
     }
@@ -59,9 +43,11 @@ impl Val {
 impl fmt::Display for Val {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Val::List(ref xs) => write!(f, "({})", xs.iter().format(" ", |x, f| f(x))),
-            Val::Number(ref x) => write!(f, "{}", x),
+            Val::Bool(true) => write!(f, "#t"),
+            Val::Bool(false) => write!(f, "#f"),
+            Val::Number(x) => write!(f, "{}", x),
             Val::Symbol(ref x) => write!(f, "{}", x),
+            Val::List(ref xs) => write!(f, "({})", xs.iter().format(" ", |x, f| f(x))),
             Val::Intrinsic(_) => write!(f, "<intrinsic>"),
         }
     }
@@ -153,11 +139,12 @@ impl Env {
 
     pub fn eval(&mut self, val: Val) -> EvalResult<Val> {
         match val {
+            Val::Bool(_) => Ok(val),
+            Val::Number(_) => Ok(val),
             Val::Symbol(x) => match self.access(&x) {
                 Some(value) => Ok(value.clone()),
                 None => Err(format!("can't access undefined variable '{}'", x)),
             },
-            Val::Number(_) => Ok(val),
             Val::List(list) => {
                 let mut args = list.into_iter();
                 match args.next() {
@@ -189,7 +176,7 @@ impl Env {
                                 };
                                 let exp_result = try!(self.eval(exp));
                                 self.define(var_name, exp_result);
-                                Ok(Val::from(false))
+                                Ok(Val::Bool(false))
                             },
                             // otherwise, call procedure
                             symbol => {
@@ -346,10 +333,14 @@ impl<'a> Parser<'a> {
     fn parse_atom(&mut self) -> ParseResult<Val> {
         let atom = self.consume_while(|ch| ch != ')' && !ch.is_whitespace());
 
-        // TODO: separate int/float types?
-        match atom.parse() {
-            Ok(x) => Ok(Val::Number(x)),
-            Err(_) => Ok(Val::Symbol(atom.to_string())),
+        match atom {
+            "#t" => Ok(Val::Bool(true)),
+            "#f" => Ok(Val::Bool(false)),
+            // TODO: separate int/float types?
+            atom => match atom.parse() {
+                Ok(x) => Ok(Val::Number(x)),
+                Err(_) => Ok(Val::Symbol(atom.to_string())),
+            },
         }
     }
 }

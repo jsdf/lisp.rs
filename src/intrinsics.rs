@@ -8,7 +8,7 @@ fn foldf64<F: Fn(f64, f64) -> f64>(args: Vec<Val>, acc: f64, f: F) -> EvalResult
     args.iter()
         .map(Val::extract_number)
         .fold_results(acc, f)
-        .map(Val::from)
+        .map(Val::Number)
 }
 
 fn apply1<F: Fn(&Val) -> EvalResult<Val>>(args: Vec<Val>, f: F) -> EvalResult<Val> {
@@ -53,26 +53,27 @@ pub fn div(args: Vec<Val>) -> EvalResult<Val> {
 }
 
 pub fn gt(args: Vec<Val>) -> EvalResult<Val> {
-    apply2f64(args, |a, b| Ok(Val::from(a > b)))
+    apply2f64(args, |a, b| Ok(Val::Bool(a > b)))
 }
 
 pub fn lt(args: Vec<Val>) -> EvalResult<Val> {
-    apply2f64(args, |a, b| Ok(Val::from(a < b)))
+    apply2f64(args, |a, b| Ok(Val::Bool(a < b)))
 }
 
 pub fn ge(args: Vec<Val>) -> EvalResult<Val> {
-    apply2f64(args, |a, b| Ok(Val::from(a >= b)))
+    apply2f64(args, |a, b| Ok(Val::Bool(a >= b)))
 }
 
 pub fn le(args: Vec<Val>) -> EvalResult<Val> {
-    apply2f64(args, |a, b| Ok(Val::from(a <= b)))
+    apply2f64(args, |a, b| Ok(Val::Bool(a <= b)))
 }
 
 pub fn eq(args: Vec<Val>) -> EvalResult<Val> {
     fn eq_bool(a: &Val, b: &Val) -> EvalResult<bool> {
         match (a, b) {
-            (&Val::Symbol(ref a), &Val::Symbol(ref b)) => Ok(a == b),
+            (&Val::Bool(a), &Val::Bool(b)) => Ok(a == b),
             (&Val::Number(a), &Val::Number(b)) => Ok(a == b),
+            (&Val::Symbol(ref a), &Val::Symbol(ref b)) => Ok(a == b),
             (&Val::List(ref a), &Val::List(ref b)) if a.len() != b.len() => Ok(false),
             (&Val::List(ref a), &Val::List(ref b)) => {
                 <_>::zip(a.iter(), b.iter())
@@ -83,11 +84,11 @@ pub fn eq(args: Vec<Val>) -> EvalResult<Val> {
         }
     }
 
-    apply2(args, |a, b| eq_bool(a, b).map(Val::from))
+    apply2(args, |a, b| eq_bool(a, b).map(Val::Bool))
 }
 
 pub fn not(args: Vec<Val>) -> EvalResult<Val> {
-    apply1(args, |x| Ok(Val::from(x.is_false())))
+    apply1(args, |x| Ok(Val::Bool(x.is_false())))
 }
 
 pub fn list(args: Vec<Val>) -> EvalResult<Val> {

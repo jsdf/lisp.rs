@@ -183,12 +183,12 @@ fn read_from_tokens(tokens: &mut Vec<String>) -> Val {
     // println!("reading token: '{}'", token);
     if "(".to_string() == token {
         let mut list: Vec<Val> = Vec::new();
-        while tokens[0] != ")".to_string() {
+        while tokens[0] != ")" {
             list.push(read_from_tokens(tokens));
         }
         tokens.remove(0); // pop off ")"
         Val::List(list)
-    } else if ")".to_string() == token {
+    } else if ")" == token {
         panic!("unexpected ')' while reading");
     } else {
         atom(token)
@@ -223,7 +223,7 @@ fn symbol_false() -> Val {
 fn standard_env() -> EnvRef {
     let null_env_ref: EnvRef = Rc::new(None);
     let mut env = Env::new(null_env_ref);
-    env.define(&("pi".to_string()), Val::Number(consts::PI));
+    env.define("pi", Val::Number(consts::PI));
     Rc::new(Some(env))
 }
 

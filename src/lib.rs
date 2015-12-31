@@ -18,7 +18,7 @@ pub enum Val {
     Number(f64),
     Symbol(String),
     List(Vec<Val>),
-    Closure(Closure),
+    Closure(Rc<Env>, Vec<String>, Box<Val>),
     Intrinsic(Intrinsic),
 }
 
@@ -39,6 +39,24 @@ impl Val {
         }
     }
 
+    fn call(&self, args: Vec<Val>) -> EvalResult<Val> {
+        match *self {
+            Val::Closure(ref parent_env, ref params, ref body) => {
+                if args.len() != params.len() {
+                    Err(format!("incorrect number of args for func, expected {}, got {}", params.len(), args.len()))
+                } else {
+                    let mut local_env = Env::new(Some(parent_env.clone()));
+                    for (ident, val) in <_>::zip(params.iter(), args.into_iter()) {
+                        local_env.define(&ident[..], val);
+                    }
+                    local_env.eval((**body).clone())
+                }
+            },
+            Val::Intrinsic(f) => f(args),
+            ref val => Err(format!("expected a function, but found '{}'", val)),
+        }
+    }
+
     fn is_false(&self) -> bool {
         match *self {
             Val::Bool(false) => true,
@@ -55,37 +73,8 @@ impl fmt::Display for Val {
             Val::Number(x) => write!(f, "{}", x),
             Val::Symbol(ref x) => write!(f, "{}", x),
             Val::List(ref xs) => write!(f, "({})", xs.iter().format(" ", |x, f| f(x))),
-            Val::Closure(ref cl) => write!(f, "(lambda ({}) ...)", cl.params.iter().format(" ", |param, f| f(param))),
+            Val::Closure(..) => write!(f, "<closure>"),
             Val::Intrinsic(_) => write!(f, "<intrinsic>"),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Closure {
-    params: Vec<String>,
-    body: Box<Val>,
-    parent: Rc<Env>,
-}
-
-impl Closure {
-    fn new(params: Vec<String>, body: Val, parent: Rc<Env>) -> Closure {
-        Closure {
-            params: params,
-            body: Box::new(body),
-            parent: parent,
-        }
-    }
-
-    fn call(&self, args: Vec<Val>) -> EvalResult<Val> {
-        if args.len() != self.params.len() {
-            Err(format!("incorrect number of args for func, expected {}, got {}", self.params.len(), args.len()))
-        } else {
-            let mut local_env = Env::new(Some(self.parent.clone()));
-            for (ident, val) in <_>::zip(self.params.iter(), args.into_iter()) {
-                local_env.define(&ident[..], val);
-            }
-            local_env.eval((*self.body).clone())
         }
     }
 }
@@ -118,9 +107,9 @@ impl Env {
         env.define("=", Val::Intrinsic(intrinsics::eq));
         env.define("not", Val::Intrinsic(intrinsics::not));
         env.define("list", Val::Intrinsic(intrinsics::list));
-        env.define("id", Val::Closure(Closure::new(vec!["x".to_string()],
-                                                   Val::Symbol("x".to_string()),
-                                                   Rc::new(Env::new(None)))));
+        env.define("id", Val::Closure(Rc::new(Env::new(None)),
+                                      vec!["x".to_string()],
+                                      Box::new(Val::Symbol("x".to_string()))));
         env
     }
 
@@ -182,7 +171,7 @@ impl Env {
                                     _ => return Err("expected params to be a list".to_string()),
                                 };
                                 let body = args.next().unwrap();
-                                Ok(Val::Closure(Closure::new(params, body, Rc::new(self.clone())))) // Ack!
+                                Ok(Val::Closure(Rc::new(self.clone()) /* Ack! */, params, Box::new(body)))
                             },
                             "define" => {
                                 let var = args.next().unwrap();
@@ -199,9 +188,7 @@ impl Env {
                             symbol => {
                                 let args = try!(self.eval_args(args));
                                 match self.access(symbol) {
-                                    Some(&Val::Closure(ref cl)) => cl.call(args),
-                                    Some(&Val::Intrinsic(f)) => f(args),
-                                    Some(val) => Err(format!("expected '{}' to be a function, but found '{}'", symbol, val)),
+                                    Some(val) => val.call(args),
                                     None => Err(format!("the function '{}' was not defined", symbol)),
                                 }
                             },
@@ -211,7 +198,7 @@ impl Env {
                     Some(_) | None => Err("unknown list form".to_string()),
                 }
             },
-            Val::Closure(_) => Ok(val),
+            Val::Closure(..) => Ok(val),
             Val::Intrinsic(_) => Ok(val),
         }
     }

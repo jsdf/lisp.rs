@@ -135,7 +135,7 @@ impl Proc {
                 };
                 local_env.define(param_name, args[0].clone()); // TODO: optimise
             }
-            eval(self.body.clone(), &mut local_env)
+            local_env.eval(self.body.clone())
         }
     }
 }
@@ -152,6 +152,12 @@ impl Env {
             vars: HashMap::new(),
             parent: parent,
         }
+    }
+
+    fn standard() -> Env {
+        let mut env = Env::new(None);
+        env.define("pi".to_string(), Val::Number(consts::PI));
+        env
     }
 
     fn access(&self, var_name: &str) -> Option<&Val> {
@@ -171,6 +177,62 @@ impl Env {
         match self.vars.get_mut(var_name) {
             Some(x) => { *x = val; },
             None => panic!("can't assign to undefined variable '{}'", var_name),
+        }
+    }
+
+    fn eval(&mut self, val: Val) -> EvalResult<Val> {
+        match val {
+            Val::Symbol(x) => match self.access(&x) {
+                Some(value) => Ok(value.clone()),
+                None => Err(format!("can't access undefined variable '{}'", x)),
+            },
+            Val::Number(_) => Ok(val),
+            Val::List(list) => {
+                let mut args = list.into_iter();
+                match args.next() {
+                    Some(Val::Symbol(symbol)) => {
+                        match symbol.trim() {
+                            "quote" => Ok(args.next().unwrap()),
+                            "if" => {
+                                let test = args.next().unwrap();
+                                let conseq = args.next().unwrap();
+                                let alt = args.next().unwrap();
+                                let test_result = try!(self.eval(test));
+                                let exp = if !test_result.is_false() { conseq } else { alt };
+                                self.eval(exp)
+                            },
+                            // "lambda" => {
+                            //     let params = match args.remove(0) {
+                            //         Val::List(x) => x,
+                            //         _ => panic!("expected params to be a list"),
+                            //     };
+                            //     let body = args.remove(0);
+                            //     Val::Callable(Proc::new(params, body, self.clone()))
+                            // },
+                            "define" => {
+                                let var = args.next().unwrap();
+                                let exp = args.next().unwrap();
+                                let var_name = match var {
+                                    Val::Symbol(name) => name,
+                                    _ => return Err("first arg to define must be a symbol".to_string()),
+                                };
+                                let exp_result = try!(self.eval(exp));
+                                self.define(var_name, exp_result);
+                                Ok(Val::from(false))
+                            },
+                            // otherwise, call procedure
+                            _ => {
+                                let evaluated_args = try! {
+                                    args.map(|arg| self.eval(arg))
+                                        .fold_results(vec![], |mut acc, x| { acc.push(x); acc })
+                                };
+                                call_proc(&symbol, evaluated_args)
+                            },
+                        }
+                    },
+                    Some(_) | None => Err("unknown list form".to_string()),
+                }
+            },
         }
     }
 }
@@ -220,7 +282,7 @@ impl fmt::Display for ReplError {
 fn read_eval(program: &str, env: &mut Env) -> Result<Val, ReplError> {
     let val = try!(program.parse().map_err(ReplError::Parse));
 
-    eval(val, env).map_err(ReplError::Eval)
+    env.eval(val).map_err(ReplError::Eval)
 }
 
 // def tokenize(chars):
@@ -303,12 +365,6 @@ fn atom(token: String) -> Val {
     }
 }
 
-fn standard_env() -> Env {
-    let mut env = Env::new(None);
-    env.define("pi".to_string(), Val::Number(consts::PI));
-    env
-}
-
 // def eval(x, env=global_env):
 //     "Evaluate an expression in an environment."
 //     if isinstance(x, Symbol):      # variable reference
@@ -329,62 +385,6 @@ fn standard_env() -> Env {
 //         proc = eval(x[0], env)
 //         args = [eval(arg, env) for arg in x[1:]]
 //         return proc(*args)
-
-fn eval(val: Val, env: &mut Env) -> EvalResult<Val> {
-    match val {
-        Val::Symbol(x) => match env.access(&x) {
-            Some(value) => Ok(value.clone()),
-            None => Err(format!("can't access undefined variable '{}'", x)),
-        },
-        Val::Number(_) => Ok(val),
-        Val::List(list) => {
-            let mut args = list.into_iter();
-            match args.next() {
-                Some(Val::Symbol(symbol)) => {
-                    match symbol.trim() {
-                        "quote" => Ok(args.next().unwrap()),
-                        "if" => {
-                            let test = args.next().unwrap();
-                            let conseq = args.next().unwrap();
-                            let alt = args.next().unwrap();
-                            let test_result = try!(eval(test, env));
-                            let exp = if !test_result.is_false() { conseq } else { alt };
-                            eval(exp, env)
-                        },
-                        // "lambda" => {
-                        //     let params = match args.remove(0) {
-                        //         Val::List(x) => x,
-                        //         _ => panic!("expected params to be a list"),
-                        //     };
-                        //     let body = args.remove(0);
-                        //     Val::Callable(Proc::new(params, body, env.clone()))
-                        // },
-                        "define" => {
-                            let var = args.next().unwrap();
-                            let exp = args.next().unwrap();
-                            let var_name = match var {
-                                Val::Symbol(name) => name,
-                                _ => return Err("first arg to define must be a symbol".to_string()),
-                            };
-                            let exp_result = try!(eval(exp, env));
-                            env.define(var_name, exp_result);
-                            Ok(Val::from(false))
-                        },
-                        // otherwise, call procedure
-                        _ => {
-                            let evaluated_args = try! {
-                                args.map(|arg| eval(arg, env))
-                                    .fold_results(vec![], |mut acc, x| { acc.push(x); acc })
-                            };
-                            call_proc(&symbol, evaluated_args)
-                        },
-                    }
-                },
-                Some(_) | None => Err("unknown list form".to_string()),
-            }
-        },
-    }
-}
 
 fn call_proc(proc_name: &str, mut args: Vec<Val>) -> EvalResult<Val> {
     match proc_name.trim() {

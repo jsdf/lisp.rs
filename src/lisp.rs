@@ -315,17 +315,15 @@ fn eval(val: Val, env: &mut Env) -> EvalResult<Val> {
         },
         Val::Number(_) => Ok(val),
         Val::List(list) => {
-            let mut args = list;
-            let proc_name = args.remove(0);
-
-            match proc_name {
-                Val::Symbol(symbol) => {
+            let mut args = list.into_iter();
+            match args.next() {
+                Some(Val::Symbol(symbol)) => {
                     match symbol.trim() {
-                        "quote" => Ok(args.remove(0)),
+                        "quote" => Ok(args.next().unwrap()),
                         "if" => {
-                            let test = args.remove(0);
-                            let conseq = args.remove(0);
-                            let alt = args.remove(0);
+                            let test = args.next().unwrap();
+                            let conseq = args.next().unwrap();
+                            let alt = args.next().unwrap();
                             let test_result = try!(eval(test, env));
                             let exp = if !test_result.is_false() { conseq } else { alt };
                             eval(exp, env)
@@ -339,8 +337,8 @@ fn eval(val: Val, env: &mut Env) -> EvalResult<Val> {
                         //     Val::Callable(Proc::new(params, body, env.clone()))
                         // },
                         "define" => {
-                            let var = args.remove(0);
-                            let exp = args.remove(0);
+                            let var = args.next().unwrap();
+                            let exp = args.next().unwrap();
                             let var_name = match var {
                                 Val::Symbol(name) => name,
                                 _ => return Err("first arg to define must be a symbol".to_string()),
@@ -352,15 +350,14 @@ fn eval(val: Val, env: &mut Env) -> EvalResult<Val> {
                         // otherwise, call procedure
                         _ => {
                             let evaluated_args = try! {
-                                args.iter()
-                                    .map(|arg| eval(arg.clone(), env))
-                                    .fold_results(Vec::with_capacity(args.len()), |mut acc, x| { acc.push(x); acc })
+                                args.map(|arg| eval(arg, env))
+                                    .fold_results(vec![], |mut acc, x| { acc.push(x); acc })
                             };
                             call_proc(&symbol, evaluated_args)
                         },
                     }
                 },
-                _ => Err("unknown list form".to_string()),
+                Some(_) | None => Err("unknown list form".to_string()),
             }
         },
     }

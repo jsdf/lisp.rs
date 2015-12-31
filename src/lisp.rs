@@ -194,15 +194,32 @@ fn read_eval_print_loop(mut env: Env) -> ! {
             .ok()
             .expect("Failed to read line");
 
-        read_eval_print(input.trim(), &mut env);
+        match read_eval(&input, &mut env) {
+            Ok(val) => println!("=> {}", val),
+            Err(err) => println!("{}", err),
+        }
     }
 }
 
-fn read_eval_print(program: &str, env: &mut Env) {
-    match eval(parse(program), env) {
-        Ok(val) => println!("=> {}", val),
-        Err(msg) => println!("error: {}", msg),
+#[derive(Debug, Clone)]
+enum ReplError {
+    Parse(String),
+    Eval(String),
+}
+
+impl fmt::Display for ReplError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            ReplError::Parse(ref msg) => write!(f, "while reading: {}", msg),
+            ReplError::Eval(ref msg) => write!(f, "while evaluating: {}", msg),
+        }
     }
+}
+
+fn read_eval(program: &str, env: &mut Env) -> Result<Val, ReplError> {
+    let val = try!(parse(program).map_err(ReplError::Parse));
+
+    eval(val, env).map_err(ReplError::Eval)
 }
 
 // def tokenize(chars):
@@ -222,7 +239,7 @@ fn tokenize(chars: &str) -> Vec<String> {
 //     "Read a Scheme expression from a string."
 //     return read_from_tokens(tokenize(program))
 
-fn parse(program: &str) -> Val {
+fn parse(program: &str) -> ParseResult<Val> {
     let mut tokens = tokenize(program);
     read_from_tokens(&mut tokens)
 }
@@ -243,23 +260,25 @@ fn parse(program: &str) -> Val {
 //     else:
 //         return atom(token)
 
-fn read_from_tokens(tokens: &mut Vec<String>) -> Val {
+type ParseResult<T> = Result<T, String>;
+
+fn read_from_tokens(tokens: &mut Vec<String>) -> ParseResult<Val> {
     if tokens.len() == 0 {
-        panic!("unexpected EOF while reading");
+        return Err("unexpected EOF".to_string());
     }
     let token = tokens.remove(0);
     // println!("reading token: '{}'", token);
     if "(".to_string() == token {
         let mut list: Vec<Val> = Vec::new();
         while tokens[0] != ")" {
-            list.push(read_from_tokens(tokens));
+            list.push(try!(read_from_tokens(tokens)));
         }
         tokens.remove(0); // pop off ")"
-        Val::List(list)
+        Ok(Val::List(list))
     } else if ")" == token {
-        panic!("unexpected ')' while reading");
+        Err("unexpected ')'".to_string())
     } else {
-        atom(token)
+        Ok(atom(token))
     }
 }
 

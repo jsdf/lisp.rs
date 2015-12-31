@@ -35,8 +35,8 @@ impl Proc {
             panic!("incorrect number of args for func, expected {}, got {}", self.params.len(), args.len());
         } else {
             let mut local_env = Env::new(self.env.clone());
-            for i in 0..self.params.len() {
-                let param_name = match self.params[i] {
+            for param in &self.params {
+                let param_name = match *param {
                     Val::Symbol(ref x) => x.clone(),
                     _ => panic!("param names must be symbols"),
                 };
@@ -330,8 +330,8 @@ fn call_proc(proc_name: &String, mut args: Vec<Val>) -> Val {
 
 fn apply_arithmetic<F: Fn(f64, f64) -> f64>(args: Vec<Val>, operator: F) -> Val {
     let mut accumulated: f64 = 0f64;
-    for i in 0..args.len() {
-        accumulated = match args[i] {
+    for (i, arg) in args.iter().enumerate() {
+        accumulated = match *arg {
             Val::Number(operand) => {
                 if i == 0 { operand } else { operator(accumulated, operand) }
             },

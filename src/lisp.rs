@@ -3,14 +3,12 @@ use itertools::Itertools;
 use std::collections::HashMap;
 use std::f64::consts;
 use std::fmt;
-use std::io;
-use std::io::prelude::*;
 use std::ops::*;
 use std::rc::Rc;
 use std::str::FromStr;
 
 #[derive(Debug, Clone)]
-enum Val {
+pub enum Val {
     List(Vec<Val>),
     Number(f64),
     Symbol(String),
@@ -29,7 +27,7 @@ impl From<bool> for Val {
     }
 }
 
-type EvalResult<T> = Result<T, String>;
+pub type EvalResult<T> = Result<T, String>;
 
 impl Val {
     fn extract_number(&self) -> EvalResult<f64> {
@@ -141,7 +139,7 @@ impl Proc {
 }
 
 #[derive(Debug, Clone)]
-struct Env {
+pub struct Env {
     vars: HashMap<String, Val>,
     parent: Option<Rc<Env>>,
 }
@@ -154,7 +152,7 @@ impl Env {
         }
     }
 
-    fn standard() -> Env {
+    pub fn standard() -> Env {
         let mut env = Env::new(None);
         env.define("pi".to_string(), Val::Number(consts::PI));
         env
@@ -180,7 +178,7 @@ impl Env {
         }
     }
 
-    fn eval(&mut self, val: Val) -> EvalResult<Val> {
+    pub fn eval(&mut self, val: Val) -> EvalResult<Val> {
         match val {
             Val::Symbol(x) => match self.access(&x) {
                 Some(value) => Ok(value.clone()),
@@ -235,37 +233,16 @@ impl Env {
             },
         }
     }
-}
 
-// lifetimes:
-// expressions are consumed by eval
-// vals are copied when storing to and accessing from the environment
+    pub fn read_eval(&mut self, src: &str) -> Result<Val, ReplError> {
+        let val = try!(src.parse().map_err(ReplError::Parse));
 
-pub fn run() {
-    let global_env = standard_env();
-    read_eval_print_loop(global_env);
-}
-
-fn read_eval_print_loop(mut env: Env) -> ! {
-    loop {
-        print!("lisp.rs> ");
-        io::stdout().flush().unwrap();
-
-        let mut input = String::new();
-
-        io::stdin().read_line(&mut input)
-            .ok()
-            .expect("Failed to read line");
-
-        match read_eval(&input, &mut env) {
-            Ok(val) => println!("=> {}", val),
-            Err(err) => println!("{}", err),
-        }
+        self.eval(val).map_err(ReplError::Eval)
     }
 }
 
 #[derive(Debug, Clone)]
-enum ReplError {
+pub enum ReplError {
     Parse(String),
     Eval(String),
 }
@@ -277,12 +254,6 @@ impl fmt::Display for ReplError {
             ReplError::Eval(ref msg) => write!(f, "while evaluating: {}", msg),
         }
     }
-}
-
-fn read_eval(program: &str, env: &mut Env) -> Result<Val, ReplError> {
-    let val = try!(program.parse().map_err(ReplError::Parse));
-
-    env.eval(val).map_err(ReplError::Eval)
 }
 
 // def tokenize(chars):

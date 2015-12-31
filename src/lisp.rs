@@ -38,13 +38,6 @@ impl Val {
         }
     }
 
-    fn extract_symbol(&self) -> EvalResult<&str> {
-        match *self {
-            Val::Symbol(ref x) => Ok(x),
-            ref val => Err(format!("expected a Symbol, found '{}'", val)),
-        }
-    }
-
     fn gt(a: &Val, b: &Val) -> EvalResult<Val> {
         let a = try!(a.extract_number());
         let b = try!(b.extract_number());
@@ -74,11 +67,21 @@ impl Val {
     }
 
     fn eq(a: &Val, b: &Val) -> EvalResult<Val> {
-        match *a {
-            Val::Symbol(_) => Ok(Val::from(try!(a.extract_symbol()) == try!(b.extract_symbol()))),
-            Val::Number(_) => Ok(Val::from(try!(a.extract_number()) == try!(b.extract_number()))),
-            Val::List(_) => Err("equality operator not implemented for List :(".to_string()),
+        fn eq_bool(a: &Val, b: &Val) -> EvalResult<bool> {
+            match (a, b) {
+                (&Val::Symbol(ref a), &Val::Symbol(ref b)) => Ok(a == b),
+                (&Val::Number(a), &Val::Number(b)) => Ok(a == b),
+                (&Val::List(ref a), &Val::List(ref b)) if a.len() != b.len() => Ok(false),
+                (&Val::List(ref a), &Val::List(ref b)) => {
+                    <_>::zip(a.iter(), b.iter())
+                        .map(|(a, b)| eq_bool(a, b))
+                        .fold_results(true, |acc, x| acc && x)
+                },
+                (a, b) => Err(format!("incompatible types passed to eq, found {} and {}", a, b))
+            }
         }
+
+        eq_bool(a, b).map(Val::from)
     }
 
     fn is_false(&self) -> bool {

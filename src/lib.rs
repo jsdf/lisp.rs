@@ -215,27 +215,6 @@ impl Env {
             Val::Intrinsic(_) => Ok(val),
         }
     }
-
-    pub fn read_eval(&mut self, src: &str) -> Result<Val, ReplError> {
-        let val = try!(src.parse().map_err(ReplError::Parse));
-
-        self.eval(val).map_err(ReplError::Eval)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum ReplError {
-    Parse(String),
-    Eval(String),
-}
-
-impl fmt::Display for ReplError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            ReplError::Parse(ref msg) => write!(f, "while reading: {}", msg),
-            ReplError::Eval(ref msg) => write!(f, "while evaluating: {}", msg),
-        }
-    }
 }
 
 type ParseResult<T> = Result<T, String>;

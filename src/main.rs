@@ -8,12 +8,19 @@ fn main() {
 
     linenoise::history_load("history");
     while let Some(input) = linenoise::input("lisp.rs> ") {
-        match env.read_eval(&input) {
-            Ok(val) => {
-                linenoise::history_add(&input);
-                println!("=> {}", val)
+        let val = match input.parse() {
+            Ok(val) => val,
+            Err(err) => {
+                println!("while reading: {}", err);
+                continue;
             },
-            Err(err) => println!("{}", err),
+        };
+
+        linenoise::history_add(&input);
+
+        match env.eval(val) {
+            Ok(val) => println!("=> {}", val),
+            Err(err) => println!("while evaluating: {}", err),
         }
     }
     linenoise::history_save("history");

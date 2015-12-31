@@ -1,26 +1,19 @@
 extern crate lisp_rs;
+extern crate linenoise;
 
 use lisp_rs::lisp::Env;
-
-use std::io;
-use std::io::prelude::*;
 
 fn main() {
     let mut env = Env::standard();
 
-    loop {
-        print!("lisp.rs> ");
-        io::stdout().flush().unwrap();
-
-        let mut input = String::new();
-
-        io::stdin().read_line(&mut input)
-            .ok()
-            .expect("Failed to read line");
-
+    while let Some(input) = linenoise::input("lisp.rs> ") {
         match env.read_eval(&input) {
-            Ok(val) => println!("=> {}", val),
+            Ok(val) => {
+                linenoise::history_add(&input);
+                println!("=> {}", val)
+            },
             Err(err) => println!("{}", err),
         }
     }
+    println!("Bye bye!");
 }

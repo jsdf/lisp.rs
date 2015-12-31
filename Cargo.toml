@@ -6,3 +6,4 @@ authors = [ "James Friend <jamesf@jsdf.co>" ]
 
 [dependencies]
 itertools = "0.4"
+linenoise-rust = "0.1.14"

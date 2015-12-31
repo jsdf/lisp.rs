@@ -12,6 +12,69 @@ enum Val {
     // Callable(Proc),
 }
 
+impl<'a> From<&'a str> for Val {
+    fn from(x: &'a str) -> Val {
+        Val::Symbol(x.to_string())
+    }
+}
+
+impl From<bool> for Val {
+    fn from(x: bool) -> Val {
+        if x { Val::from("#t") } else { Val::from("#f") }
+    }
+}
+
+impl Val {
+    fn extract_number(&self) -> f64 {
+        match *self {
+            Val::Number(x) => x,
+            _ => panic!("expected a Number"),
+        }
+    }
+
+    fn extract_symbol(&self) -> &str {
+        match *self {
+            Val::Symbol(ref x) => x,
+            _ => panic!("expected a Symbol"),
+        }
+    }
+
+    fn gt(a: &Val, b: &Val) -> Val {
+        Val::from(a.extract_number() > b.extract_number())
+    }
+
+    fn lt(a: &Val, b: &Val) -> Val {
+        Val::from(a.extract_number() < b.extract_number())
+    }
+
+    fn gte(a: &Val, b: &Val) -> Val {
+        Val::from(a.extract_number() >= b.extract_number())
+    }
+
+    fn lte(a: &Val, b: &Val) -> Val {
+        Val::from(a.extract_number() <= b.extract_number())
+    }
+
+    fn eq(a: &Val, b: &Val) -> Val {
+        match *a {
+            Val::Symbol(_) => Val::from(a.extract_symbol() == b.extract_symbol()),
+            Val::Number(_) => Val::from(a.extract_number() == b.extract_number()),
+            Val::List(_) => panic!("equality operator not implemented for List :("),
+        }
+    }
+
+    fn is_false(&self) -> bool {
+        match *self {
+            Val::Symbol(ref x) => x == "#f",
+            _ => false,
+        }
+    }
+
+    fn not(&self) -> Val {
+        Val::from(self.is_false())
+    }
+}
+
 type EnvRef = Rc<Option<Env>>;
 
 #[derive(Debug,Clone)]
@@ -212,14 +275,6 @@ fn atom(token: String) -> Val {
     }
 }
 
-fn symbol_true() -> Val {
-    Val::Symbol("#t".to_string())
-}
-
-fn symbol_false() -> Val {
-    Val::Symbol("#f".to_string())
-}
-
 fn standard_env() -> EnvRef {
     let null_env_ref: EnvRef = Rc::new(None);
     let mut env = Env::new(null_env_ref);
@@ -232,7 +287,7 @@ fn standard_env() -> EnvRef {
 //     if isinstance(x, Symbol):      # variable reference
 //         return env[x]
 //     elif not isinstance(x, List):  # constant literal
-//         return x                
+//         return x
 //     elif x[0] == 'quote':          # (quote exp)
 //         (_, exp) = x
 //         return exp
@@ -266,7 +321,7 @@ fn eval(val: Val, env: EnvRef) -> Val {
                             let conseq = args.remove(0);
                             let alt = args.remove(0);
                             let test_result = eval(test, env.clone());
-                            let exp = if !is_false(test_result) { conseq } else { alt };
+                            let exp = if !test_result.is_false() { conseq } else { alt };
                             eval(exp, env.clone())
                         },
                         // "lambda" => {
@@ -286,7 +341,7 @@ fn eval(val: Val, env: EnvRef) -> Val {
                             };
                             let exp_result = eval(exp, env.clone());
                             Rc::try_unwrap(env).unwrap().unwrap().define(&var_name, exp_result);
-                            symbol_false()
+                            Val::from(false)
                         },
                         // otherwise, call procedure
                         _ => {
@@ -321,7 +376,7 @@ fn call_proc(proc_name: &str, mut args: Vec<Val>) -> Val {
         "begin" => {
             match args.pop() {
                 Some(x) => x,
-                None => symbol_false(),
+                None => Val::from(false),
             }
         },
         _ => panic!("unknown proc"),
@@ -341,88 +396,18 @@ fn apply_arithmetic<F: Fn(f64, f64) -> f64>(args: Vec<Val>, operator: F) -> Val 
     Val::Number(accumulated)
 }
 
-fn add(a: f64, b: f64) -> f64 {
-    a + b
-}
-
-fn sub(a: f64, b: f64) -> f64 {
-    a - b
-}
-
-fn mul(a: f64, b: f64) -> f64 {
-    a * b
-}
-
-fn div(a: f64, b: f64) -> f64 {
-    a / b
-}
-
-fn apply1<F: Fn(Val) -> Val>(args: Vec<Val>, func: F) -> Val {
+fn apply1<F: Fn(&Val) -> Val>(args: Vec<Val>, func: F) -> Val {
     if args.len() != 1 {
         panic!("incorrect number of args for func, expected 1, got {}", args.len());
     } else {
-        func(args[0].clone())
+        func(&args[0])
     }
 }
 
-fn apply2<F: Fn(Val, Val) -> Val>(args: Vec<Val>, func: F) -> Val {
+fn apply2<F: Fn(&Val, &Val) -> Val>(args: Vec<Val>, func: F) -> Val {
     if args.len() != 2 {
         panic!("incorrect number of args for func, expected 2, got {}", args.len());
     } else {
-        func(args[0].clone(), args[1].clone())
+        func(&args[0], &args[1])
     }
-}
-
-fn bool_to_symbol(x: bool) -> Val {
-    if x { symbol_true() } else { symbol_false() }
-}
-
-fn extract_number(val: Val) -> f64 {
-    match val {
-        Val::Number(x) => x,
-        _ => panic!("expected a Number"),
-    }
-}
-
-fn extract_symbol(val: Val) -> String {
-    match val {
-        Val::Symbol(x) => x,
-        _ => panic!("expected a Symbol"),
-    }
-}
-
-fn gt(a: Val, b: Val) -> Val {
-    bool_to_symbol(extract_number(a) > extract_number(b))
-}
-
-fn lt(a: Val, b: Val) -> Val {
-    bool_to_symbol(extract_number(a) < extract_number(b))
-}
-
-fn gte(a: Val, b: Val) -> Val {
-    bool_to_symbol(extract_number(a) >= extract_number(b))
-}
-
-fn lte(a: Val, b: Val) -> Val {
-    bool_to_symbol(extract_number(a) <= extract_number(b))
-}
-
-fn eq(a: Val, b: Val) -> Val {
-    match a {
-        Val::Symbol(_) => bool_to_symbol(extract_symbol(a) == extract_symbol(b)),
-        Val::Number(_) => bool_to_symbol(extract_number(a) == extract_number(b)),
-        Val::List(_) => panic!("equality operator not implemented for List :("),
-    }
-}
-
-fn is_false(val: Val) -> bool {
-    match val {
-        Val::Symbol(x) => x == "#f",
-        _ => false,
-    }
-}
-
-fn not(val: Val) -> Val {
-    let boolean_value = !is_false(val);
-    bool_to_symbol(!boolean_value)
 }

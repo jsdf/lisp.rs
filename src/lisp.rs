@@ -106,17 +106,15 @@ impl fmt::Display for Val {
     }
 }
 
-type EnvRef = Rc<Option<Env>>;
-
 #[derive(Debug, Clone)]
 struct Proc {
     params: Vec<Val>,
     body: Val,
-    env: EnvRef,
+    env: Rc<Env>,
 }
 
 impl Proc {
-    fn new(params: Vec<Val>, body: Val, env: EnvRef) -> Proc {
+    fn new(params: Vec<Val>, body: Val, env: Rc<Env>) -> Proc {
         Proc {
             params: params,
             body: body,
@@ -128,7 +126,7 @@ impl Proc {
         if args.len() != self.params.len() {
             Err(format!("incorrect number of args for func, expected {}, got {}", self.params.len(), args.len()))
         } else {
-            let mut local_env = Env::new(self.env.clone());
+            let mut local_env = Env::new(Some(self.env.clone()));
             for param in &self.params {
                 let param_name = match *param {
                     Val::Symbol(ref x) => x.clone(),
@@ -136,8 +134,7 @@ impl Proc {
                 };
                 local_env.define(&param_name, args[0].clone()); // TODO: optimise
             }
-            let local_env_ref: EnvRef = Rc::new(Some(local_env));
-            eval(self.body.clone(), local_env_ref)
+            eval(self.body.clone(), &mut local_env)
         }
     }
 }
@@ -145,11 +142,11 @@ impl Proc {
 #[derive(Debug, Clone)]
 struct Env {
     vars: HashMap<String, Val>,
-    parent: EnvRef,
+    parent: Option<Rc<Env>>,
 }
 
 impl Env {
-    fn new(parent: EnvRef) -> Env {
+    fn new(parent: Option<Rc<Env>>) -> Env {
         Env {
             vars: HashMap::new(),
             parent: parent,
@@ -160,7 +157,7 @@ impl Env {
         match self.vars.get(var_name) {
             Some(x) => x.clone(),
             None => {
-                match *self.parent {
+                match self.parent {
                     Some(ref parent) => parent.access(&var_name),
                     None => panic!("can't access undefined variable '{}'", var_name),
                 }
@@ -192,7 +189,7 @@ pub fn run() {
     read_eval_print_loop(global_env);
 }
 
-fn read_eval_print_loop(env: EnvRef) -> ! {
+fn read_eval_print_loop(mut env: Env) -> ! {
     loop {
         print!("lisp.rs> ");
         io::stdout().flush().unwrap();
@@ -203,12 +200,12 @@ fn read_eval_print_loop(env: EnvRef) -> ! {
             .ok()
             .expect("Failed to read line");
 
-        read_eval_print(input.trim(), env.clone());
+        read_eval_print(input.trim(), &mut env);
     }
 }
 
-fn read_eval_print(program: &str, env: EnvRef) {
-    match eval(parse(program), env.clone()) {
+fn read_eval_print(program: &str, env: &mut Env) {
+    match eval(parse(program), env) {
         Ok(val) => println!("=> {}", val),
         Err(msg) => println!("error: {}", msg),
     }
@@ -289,11 +286,10 @@ fn atom(token: String) -> Val {
     }
 }
 
-fn standard_env() -> EnvRef {
-    let null_env_ref: EnvRef = Rc::new(None);
-    let mut env = Env::new(null_env_ref);
+fn standard_env() -> Env {
+    let mut env = Env::new(None);
     env.define("pi", Val::Number(consts::PI));
-    Rc::new(Some(env))
+    env
 }
 
 // def eval(x, env=global_env):
@@ -317,9 +313,9 @@ fn standard_env() -> EnvRef {
 //         args = [eval(arg, env) for arg in x[1:]]
 //         return proc(*args)
 
-fn eval(val: Val, env: EnvRef) -> EvalResult<Val> {
+fn eval(val: Val, env: &mut Env) -> EvalResult<Val> {
     match val {
-        Val::Symbol(x) => Ok(Rc::try_unwrap(env).unwrap().unwrap().access(&x)),
+        Val::Symbol(x) => Ok(env.access(&x)),
         Val::Number(_) => Ok(val),
         Val::List(list) => {
             let mut args = list;
@@ -333,9 +329,9 @@ fn eval(val: Val, env: EnvRef) -> EvalResult<Val> {
                             let test = args.remove(0);
                             let conseq = args.remove(0);
                             let alt = args.remove(0);
-                            let test_result = try!(eval(test, env.clone()));
+                            let test_result = try!(eval(test, env));
                             let exp = if !test_result.is_false() { conseq } else { alt };
-                            eval(exp, env.clone())
+                            eval(exp, env)
                         },
                         // "lambda" => {
                         //     let params = match args.remove(0) {
@@ -352,15 +348,15 @@ fn eval(val: Val, env: EnvRef) -> EvalResult<Val> {
                                 Val::Symbol(ref x) => x,
                                 _ => return Err("first arg to define must be a symbol".to_string()),
                             };
-                            let exp_result = try!(eval(exp, env.clone()));
-                            Rc::try_unwrap(env).unwrap().unwrap().define(&var_name, exp_result);
+                            let exp_result = try!(eval(exp, env));
+                            env.define(&var_name, exp_result);
                             Ok(Val::from(false))
                         },
                         // otherwise, call procedure
                         _ => {
                             let evaluated_args = try! {
                                 args.iter()
-                                    .map(|arg| eval(arg.clone(), env.clone()))
+                                    .map(|arg| eval(arg.clone(), env))
                                     .fold_results(Vec::with_capacity(args.len()), |mut acc, x| { acc.push(x); acc })
                             };
                             call_proc(&symbol, evaluated_args)

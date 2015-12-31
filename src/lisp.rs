@@ -1,11 +1,14 @@
+use itertools::Itertools;
+
 use std::collections::HashMap;
 use std::f64::consts;
+use std::fmt;
 use std::io;
 use std::io::prelude::*;
 use std::ops::*;
 use std::rc::Rc;
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 enum Val {
     List(Vec<Val>),
     Number(f64),
@@ -76,9 +79,19 @@ impl Val {
     }
 }
 
+impl fmt::Display for Val {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Val::List(ref xs) => write!(f, "({})", xs.iter().format(" ", |x, f| f(x))),
+            Val::Number(ref x) => write!(f, "{}", x),
+            Val::Symbol(ref x) => write!(f, "{}", x),
+        }
+    }
+}
+
 type EnvRef = Rc<Option<Env>>;
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 struct Proc {
     params: Vec<Val>,
     body: Val,
@@ -112,7 +125,7 @@ impl Proc {
     }
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 struct Env {
     vars: HashMap<String, Val>,
     parent: EnvRef,
@@ -178,27 +191,7 @@ fn read_eval_print_loop(env: EnvRef) -> ! {
 }
 
 fn read_eval_print(program: &str, env: EnvRef) {
-    let program_result = eval(parse(program), env.clone());
-    print!("=> ");
-    print_val(&program_result);
-}
-
-fn format_list(list: &Vec<Val>) -> String {
-    let formatted_items: Vec<String> = list.iter().map(|item| format_val(&item)).collect();
-
-    format!("({})", formatted_items.join(" "))
-}
-
-fn format_val(val: &Val) -> String {
-    match *val {
-        Val::List(ref x) => format_list(&x),
-        Val::Number(ref x) => format!("{}", x),
-        Val::Symbol(ref x) => format!("{}", x),
-    }
-}
-
-fn print_val(val: &Val) {
-    println!("{}", format_val(&val));
+    println!("=> {}", eval(parse(program), env.clone()));
 }
 
 // def tokenize(chars):

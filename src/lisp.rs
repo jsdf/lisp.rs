@@ -7,6 +7,7 @@ use std::io;
 use std::io::prelude::*;
 use std::ops::*;
 use std::rc::Rc;
+use std::str::FromStr;
 
 #[derive(Debug, Clone)]
 enum Val {
@@ -217,7 +218,7 @@ impl fmt::Display for ReplError {
 }
 
 fn read_eval(program: &str, env: &mut Env) -> Result<Val, ReplError> {
-    let val = try!(parse(program).map_err(ReplError::Parse));
+    let val = try!(program.parse().map_err(ReplError::Parse));
 
     eval(val, env).map_err(ReplError::Eval)
 }
@@ -235,13 +236,18 @@ fn tokenize(chars: &str) -> Vec<String> {
         .collect()
 }
 
-// def parse(program):
-//     "Read a Scheme expression from a string."
-//     return read_from_tokens(tokenize(program))
+type ParseResult<T> = Result<T, String>;
 
-fn parse(program: &str) -> ParseResult<Val> {
-    let mut tokens = tokenize(program);
-    read_from_tokens(&mut tokens)
+impl FromStr for Val {
+    type Err = String;
+
+    // def parse(program):
+    //     "Read a Scheme expression from a string."
+    //     return read_from_tokens(tokenize(program))
+    fn from_str(src: &str) -> ParseResult<Val> {
+        let mut tokens = tokenize(src);
+        read_from_tokens(&mut tokens)
+    }
 }
 
 // def read_from_tokens(tokens):
@@ -259,8 +265,6 @@ fn parse(program: &str) -> ParseResult<Val> {
 //         raise SyntaxError('unexpected )')
 //     else:
 //         return atom(token)
-
-type ParseResult<T> = Result<T, String>;
 
 fn read_from_tokens(tokens: &mut Vec<String>) -> ParseResult<Val> {
     if tokens.len() == 0 {
@@ -292,7 +296,7 @@ fn read_from_tokens(tokens: &mut Vec<String>) -> ParseResult<Val> {
 
 fn atom(token: String) -> Val {
     // TODO: separate int/float types?
-    let number = token.parse::<f64>();
+    let number = token.parse();
     match number {
         Ok(x) => Val::Number(x),
         Err(_) => Val::Symbol(token),

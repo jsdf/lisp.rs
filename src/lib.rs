@@ -234,82 +234,122 @@ impl fmt::Display for ReplError {
     }
 }
 
-// def tokenize(chars):
-//     "Convert a string of characters into a list of tokens."
-//     return chars.replace('(', ' ( ').replace(')', ' ) ').split()
-
-fn tokenize(chars: &str) -> Vec<String> {
-    chars
-        .replace("(", " ( ")
-        .replace(")", " ) ")
-        .split_whitespace()
-        .map(|s| s.to_string())
-        .collect()
-}
-
 type ParseResult<T> = Result<T, String>;
 
 impl FromStr for Val {
     type Err = String;
 
-    // def parse(program):
-    //     "Read a Scheme expression from a string."
-    //     return read_from_tokens(tokenize(program))
     fn from_str(src: &str) -> ParseResult<Val> {
-        let mut tokens = tokenize(src);
-        read_from_tokens(&mut tokens)
+        Parser::new(src).parse_value()
     }
 }
 
-// def read_from_tokens(tokens):
-//     "Read an expression from a sequence of tokens."
-//     if len(tokens) == 0:
-//         raise SyntaxError('unexpected EOF while reading')
-//     token = tokens.pop(0)
-//     if '(' == token:
-//         L = []
-//         while tokens[0] != ')':
-//             L.append(read_from_tokens(tokens))
-//         tokens.pop(0) # pop off ')'
-//         return L
-//     elif ')' == token:
-//         raise SyntaxError('unexpected )')
-//     else:
-//         return atom(token)
+struct Parser<'a> {
+    src: &'a str,
+    byte_pos: usize,
+    current: &'a str,
+}
 
-fn read_from_tokens(tokens: &mut Vec<String>) -> ParseResult<Val> {
-    if tokens.len() == 0 {
-        return Err("unexpected EOF".to_string());
+impl<'a> Parser<'a> {
+    fn new(src: &'a str) -> Parser<'a> {
+        Parser { src: src, byte_pos: 0, current: src }
     }
-    let token = tokens.remove(0);
-    // println!("reading token: '{}'", token);
-    if "(".to_string() == token {
-        let mut list: Vec<Val> = Vec::new();
-        while tokens[0] != ")" {
-            list.push(try!(read_from_tokens(tokens)));
+
+    fn is_eof(&self) -> bool {
+        self.byte_pos >= self.src.len()
+    }
+
+    fn peek(&self) -> Option<char> {
+        self.current.chars().next()
+    }
+
+    fn advance_bytes(&mut self, n: usize) {
+        self.byte_pos += n;
+
+        if self.is_eof() {
+            self.byte_pos = self.src.len();
+            self.current = "";
+        } else {
+            self.current = &self.current[n..];
         }
-        tokens.remove(0); // pop off ")"
-        Ok(Val::List(list))
-    } else if ")" == token {
-        Err("unexpected ')'".to_string())
-    } else {
-        Ok(atom(token))
     }
-}
 
-// def atom(token):
-//     "Numbers become numbers; every other token is a symbol."
-//     try: return int(token)
-//     except ValError:
-//         try: return float(token)
-//         except ValError:
-//             return Symbol(token)
+    fn eat_char(&mut self, ch: char) -> bool {
+        if self.current.starts_with(ch) {
+            self.advance_bytes(ch.len_utf8());
+            true
+        } else {
+            false
+        }
+    }
 
-fn atom(token: String) -> Val {
-    // TODO: separate int/float types?
-    let number = token.parse();
-    match number {
-        Ok(x) => Val::Number(x),
-        Err(_) => Val::Symbol(token),
+    fn consume_while<F: Fn(char) -> bool>(&mut self, f: F) -> &str {
+        let char_index = self.current.char_indices()
+            .skip_while(|&(_, ch)| f(ch))
+            .next();
+
+        match char_index {
+            Some((pos, _)) => {
+                let slice = &self.current[..pos];
+                self.advance_bytes(pos);
+                slice
+            },
+            None => "",
+        }
+    }
+
+    fn skip_while<F: Fn(char) -> bool>(&mut self, f: F) -> bool {
+        let char_index = self.current.char_indices()
+            .skip_while(|&(_, ch)| f(ch))
+            .next();
+
+        match char_index {
+            Some((pos, _)) => { self.advance_bytes(pos); true },
+            None => false,
+        }
+    }
+
+    fn skip_whitespace(&mut self) -> bool {
+        self.skip_while(char::is_whitespace)
+    }
+
+    fn parse_value(&mut self) -> ParseResult<Val> {
+        self.skip_whitespace();
+        if self.eat_char('(') {
+            self.parse_list()
+        } else {
+            match self.peek() {
+                Some(')') => Err("unexpected `)`".to_string()),
+                Some(_) => self.parse_atom(),
+                None => Err("unexpected EOF".to_string()),
+            }
+        }
+    }
+
+    fn parse_list(&mut self) -> ParseResult<Val> {
+        let mut list = vec![];
+        loop {
+            if self.is_eof() {
+                return Err("unexpected EOF".to_string());
+            }
+
+            if self.eat_char(')') {
+                return Ok(Val::List(list));
+            }
+
+            list.push(try!(self.parse_value()));
+
+            self.skip_whitespace();
+        }
+    }
+
+    fn parse_atom(&mut self) -> ParseResult<Val> {
+        let atom = self.consume_while(|ch| ch != ')' && !ch.is_whitespace());
+
+        // TODO: separate int/float types?
+        match atom.parse() {
+            Ok(x) => Ok(Val::Number(x)),
+            Err(_) => Ok(Val::Symbol(atom.to_string())),
+        }
     }
 }

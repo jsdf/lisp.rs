@@ -1,7 +1,7 @@
-extern crate lisp_rs;
+extern crate lisp;
 extern crate linenoise;
 
-use lisp_rs::lisp::Env;
+use lisp::Env;
 
 fn main() {
     let mut env = Env::standard();

@@ -3,16 +3,17 @@ use std::f64::consts;
 use std::io;
 use std::io::prelude::*;
 use std::rc::Rc;
+use std::cell::RefCell;
 
 #[derive(Debug,Clone)]
 enum Val {
     List(Vec<Val>),
     Number(f64),
     Symbol(String),
-    // Callable(Proc),
+    Callable(Box<Proc>),
 }
 
-type EnvRef = Rc<Option<Env>>;
+type EnvRef = Rc<RefCell<Env>>;
 
 #[derive(Debug,Clone)]
 struct Proc {
@@ -34,7 +35,7 @@ impl Proc {
         if args.len() != self.params.len() {
             panic!("incorrect number of args for func, expected {}, got {}", self.params.len(), args.len());
         } else {
-            let mut local_env = Env::new(self.env.clone());
+            let mut local_env = Env::new(Some(self.env.clone()));
             for i in 0..self.params.len() {
                 let param_name = match self.params[i] {
                     Val::Symbol(ref x) => x.clone(),
@@ -42,7 +43,7 @@ impl Proc {
                 };
                 local_env.define(&param_name, args[0].clone()); // TODO: optimise
             }
-            let local_env_ref: EnvRef = Rc::new(Some(local_env));
+            let local_env_ref: EnvRef = Rc::new(RefCell::new(local_env));
             eval(self.body.clone(), local_env_ref)
         }
     }
@@ -51,11 +52,11 @@ impl Proc {
 #[derive(Debug,Clone)]
 struct Env {
     vars: HashMap<String, Val>,
-    parent: EnvRef,
+    parent: Option<EnvRef>,
 }
 
 impl Env {
-    fn new(parent: EnvRef) -> Env {
+    fn new(parent: Option<EnvRef>) -> Env {
         Env {
             vars: HashMap::new(),
             parent: parent,
@@ -66,8 +67,8 @@ impl Env {
         match self.vars.get(var_name) {
             Some(x) => x.clone(),
             None => {
-                match *self.parent {
-                    Some(ref parent) => parent.access(&var_name),
+                match self.parent {
+                    Some(ref parent) => parent.borrow().access(&var_name),
                     None => panic!("can't access undefined variable '{}'", var_name),
                 }
             },
@@ -130,6 +131,7 @@ fn format_val(val: &Val) -> String {
         Val::List(ref x) => format_list(&x),
         Val::Number(ref x) => format!("{}", x),
         Val::Symbol(ref x) => format!("{}", x),
+        Val::Callable(ref x) => format!("(callable (args {}), (body {}))", format_list(&x.params), format_val(&x.body)),
     }
 }
 
@@ -221,10 +223,10 @@ fn symbol_false() -> Val {
 }
 
 fn standard_env() -> EnvRef {
-    let null_env_ref: EnvRef = Rc::new(None);
+    let null_env_ref: Option<EnvRef> = None;
     let mut env = Env::new(null_env_ref);
     env.define(&("pi".to_string()), Val::Number(consts::PI));
-    Rc::new(Some(env))
+    Rc::new(RefCell::new(env))
 }
 
 // def eval(x, env=global_env):
@@ -251,15 +253,16 @@ fn standard_env() -> EnvRef {
 fn eval(val: Val, env: EnvRef) -> Val {
     // println!("eval {:?}", &val);
     let result = match val {
-        Val::Symbol(x) => Rc::try_unwrap(env).unwrap().unwrap().access(&x),
+        Val::Symbol(x) => env.borrow().access(&x),
         Val::Number(_) => val,
+        Val::Callable(_) => val,
         Val::List(list) => {
             let mut args = list;
-            let proc_name = args.remove(0);
+            let proc_name_arg = args.remove(0);
 
-            match proc_name {
-                Val::Symbol(symbol) => {
-                    match symbol.trim() {
+            match proc_name_arg {
+                Val::Symbol(proc_name) => {
+                    match proc_name.trim() {
                         "quote" => args.remove(0),
                         "if" => {
                             let test = args.remove(0);
@@ -269,14 +272,14 @@ fn eval(val: Val, env: EnvRef) -> Val {
                             let exp = if !is_false(test_result) { conseq } else { alt };
                             eval(exp, env.clone())
                         },
-                        // "lambda" => {
-                        //     let params = match args.remove(0) {
-                        //         Val::List(x) => x,
-                        //         _ => panic!("expected params to be a list"),
-                        //     };
-                        //     let body = args.remove(0);
-                        //     Val::Callable(Proc::new(params, body, env.clone()))
-                        // },
+                        "lambda" => {
+                            let params = match args.remove(0) {
+                                Val::List(x) => x,
+                                _ => panic!("expected params to be a list"),
+                            };
+                            let body = args.remove(0);
+                            Val::Callable(Box::new(Proc::new(params, body, env.clone())))
+                        },
                         "define" => {
                             let var = args.remove(0);
                             let exp = args.remove(0);
@@ -285,7 +288,7 @@ fn eval(val: Val, env: EnvRef) -> Val {
                                 _ => panic!("first arg to define must be a symbol"),
                             };
                             let exp_result = eval(exp, env.clone());
-                            Rc::try_unwrap(env).unwrap().unwrap().define(&var_name, exp_result);
+                            env.borrow_mut().define(&var_name, exp_result);
                             symbol_false()
                         },
                         // otherwise, call procedure
@@ -293,7 +296,7 @@ fn eval(val: Val, env: EnvRef) -> Val {
                             let evaluated_args: Vec<Val> = args.iter()
                                 .map(|arg| eval(arg.clone(), env.clone()))
                                 .collect();
-                            call_proc(&symbol, evaluated_args)
+                            call_proc(&proc_name, evaluated_args, env)
                         },
                     }
                 },
@@ -305,8 +308,8 @@ fn eval(val: Val, env: EnvRef) -> Val {
     result
 }
 
-fn call_proc(proc_name: &String, mut args: Vec<Val>) -> Val {
-    match proc_name.trim() {
+fn call_proc(proc_name: &String, mut args: Vec<Val>, env: EnvRef) -> Val {
+    match &proc_name[..] {
         "+" => apply_arithmetic(args, add),
         "-" => apply_arithmetic(args, sub),
         "*" => apply_arithmetic(args, mul),
@@ -324,7 +327,12 @@ fn call_proc(proc_name: &String, mut args: Vec<Val>) -> Val {
                 None => symbol_false(),
             }
         },
-        _ => panic!("unknown proc"),
+        _ => {
+            match eval(Val::Symbol(proc_name.to_string()), env) {
+                Val::Callable(proc_to_call) => proc_to_call.call(args),
+                _ => panic!("expected {} to be callable", proc_name),
+            }
+        },
     }
 }
 
@@ -412,6 +420,7 @@ fn eq(a: Val, b: Val) -> Val {
         Val::Symbol(_) => bool_to_symbol(extract_symbol(a) == extract_symbol(b)),
         Val::Number(_) => bool_to_symbol(extract_number(a) == extract_number(b)),
         Val::List(_) => panic!("equality operator not implemented for List :("),
+        Val::Callable(_) => panic!("equality operator not implemented for Callable :("),
     }
 }
 

@@ -18,7 +18,7 @@ fn main() {
 
         linenoise::history_add(&input);
 
-        match env.eval(val) {
+        match Env::eval(&mut env, val) {
             Ok(val) => println!("=> {}", val),
             Err(err) => println!("while evaluating: {}", err),
         }

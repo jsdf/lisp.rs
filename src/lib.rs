@@ -2,10 +2,11 @@ extern crate itertools;
 
 use itertools::Itertools;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::f64::consts;
 use std::fmt;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::str::FromStr;
 
 mod intrinsics;
@@ -18,7 +19,7 @@ pub enum Val {
     Number(f64),
     Symbol(String),
     List(Vec<Val>),
-    Closure(Rc<Env>, Vec<String>, Box<Val>),
+    Closure(Weak<EnvCell>, Vec<String>, Box<Val>),
     Intrinsic(Intrinsic),
 }
 
@@ -45,11 +46,11 @@ impl Val {
                 if args.len() != params.len() {
                     Err(format!("incorrect number of args for func, expected {}, got {}", params.len(), args.len()))
                 } else {
-                    let mut local_env = Env::new(Some(parent_env.clone()));
+                    let mut local_env = Env::with_parent(parent_env.clone());
                     for (ident, val) in <_>::zip(params.iter(), args.into_iter()) {
-                        local_env.define(&ident[..], val);
+                        local_env.borrow_mut().define(&ident[..], val);
                     }
-                    local_env.eval((**body).clone())
+                    Env::eval(&mut local_env, (**body).clone())
                 }
             },
             Val::Intrinsic(f) => f(args),
@@ -79,44 +80,74 @@ impl fmt::Display for Val {
     }
 }
 
+pub type EnvCell = RefCell<Env>;
+
 #[derive(Debug, Clone)]
 pub struct Env {
     vars: HashMap<String, Val>,
-    parent: Option<Rc<Env>>,
+    parent: Option<Weak<EnvCell>>,
 }
 
 impl Env {
-    fn new(parent: Option<Rc<Env>>) -> Env {
-        Env {
-            vars: HashMap::new(),
-            parent: parent,
-        }
+    fn empty() -> Rc<EnvCell> {
+        Rc::new(
+            RefCell::new(Env {
+                vars: HashMap::new(),
+                parent: None,
+            })
+        )
     }
 
-    pub fn standard() -> Env {
-        let mut env = Env::new(None);
-        env.define("pi", Val::Number(consts::PI));
-        env.define("+", Val::Intrinsic(intrinsics::add));
-        env.define("-", Val::Intrinsic(intrinsics::sub));
-        env.define("*", Val::Intrinsic(intrinsics::mul));
-        env.define("/", Val::Intrinsic(intrinsics::div));
-        env.define(">", Val::Intrinsic(intrinsics::gt));
-        env.define("<", Val::Intrinsic(intrinsics::lt));
-        env.define(">=", Val::Intrinsic(intrinsics::ge));
-        env.define("<=", Val::Intrinsic(intrinsics::le));
-        env.define("=", Val::Intrinsic(intrinsics::eq));
-        env.define("not", Val::Intrinsic(intrinsics::not));
-        env.define("list", Val::Intrinsic(intrinsics::list));
-        env.define("id", Val::Closure(Rc::new(Env::new(None)),
-                                      vec!["x".to_string()],
-                                      Box::new(Val::Symbol("x".to_string()))));
+    fn with_parent(parent: Weak<EnvCell>) -> Rc<EnvCell> {
+        Rc::new(
+            RefCell::new(Env {
+                vars: HashMap::new(),
+                parent: Some(parent),
+            })
+        )
+    }
+
+    pub fn standard() -> Rc<EnvCell> {
+        let env = Env::empty();
+        env.borrow_mut().define("pi", Val::Number(consts::PI));
+        env.borrow_mut().define("+", Val::Intrinsic(intrinsics::add));
+        env.borrow_mut().define("-", Val::Intrinsic(intrinsics::sub));
+        env.borrow_mut().define("*", Val::Intrinsic(intrinsics::mul));
+        env.borrow_mut().define("/", Val::Intrinsic(intrinsics::div));
+        env.borrow_mut().define(">", Val::Intrinsic(intrinsics::gt));
+        env.borrow_mut().define("<", Val::Intrinsic(intrinsics::lt));
+        env.borrow_mut().define(">=", Val::Intrinsic(intrinsics::ge));
+        env.borrow_mut().define("<=", Val::Intrinsic(intrinsics::le));
+        env.borrow_mut().define("=", Val::Intrinsic(intrinsics::eq));
+        env.borrow_mut().define("not", Val::Intrinsic(intrinsics::not));
+        env.borrow_mut().define("list", Val::Intrinsic(intrinsics::list));
+        env.borrow_mut().define(
+            "id",
+            Val::Closure(
+                Rc::downgrade(&env),
+                vec!["x".to_string()],
+                Box::new(Val::Symbol("x".to_string()))
+            )
+        );
+        env.borrow_mut().define(
+            "test-outer",
+            Val::Closure(
+                Rc::downgrade(&env),
+                vec![],
+                Box::new(Val::Symbol("pi".to_string()))
+            )
+        );
         env
     }
 
-    fn access(&self, var_name: &str) -> Option<&Val> {
-        self.vars.get(var_name).or_else(|| {
-            self.parent.as_ref().and_then(|parent| parent.access(&var_name))
-        })
+    fn access(&self, var_name: &str) -> Option<Val> {
+        self.vars.get(var_name)
+            .map(Val::clone)
+            .or_else(|| {
+                self.parent.as_ref()
+                    .and_then(Weak::upgrade)
+                    .and_then(|parent| parent.borrow().access(&var_name).clone())
+            })
     }
 
     fn define<S: Into<String>>(&mut self, var_name: S, val: Val) {
@@ -126,24 +157,17 @@ impl Env {
         }
     }
 
-    fn assign(&mut self, var_name: &str, val: Val) {
-        match self.vars.get_mut(var_name) {
-            Some(x) => { *x = val; },
-            None => panic!("can't assign to undefined variable '{}'", var_name),
-        }
-    }
-
-    fn eval_args<I: IntoIterator<Item = Val>>(&mut self, args: I) -> EvalResult<Vec<Val>> {
+    fn eval_args<I: IntoIterator<Item = Val>>(env: &mut Rc<EnvCell>, args: I) -> EvalResult<Vec<Val>> {
         args.into_iter()
-            .map(|arg| self.eval(arg))
+            .map(|arg| Env::eval(env, arg))
             .fold_results(vec![], |mut acc, x| { acc.push(x); acc })
     }
 
-    pub fn eval(&mut self, val: Val) -> EvalResult<Val> {
+    pub fn eval(env: &mut Rc<EnvCell>, val: Val) -> EvalResult<Val> {
         match val {
             Val::Bool(_) => Ok(val),
             Val::Number(_) => Ok(val),
-            Val::Symbol(x) => match self.access(&x) {
+            Val::Symbol(x) => match env.borrow().access(&x) {
                 Some(value) => Ok(value.clone()),
                 None => Err(format!("can't access undefined variable '{}'", x)),
             },
@@ -157,9 +181,9 @@ impl Env {
                                 let test = args.next().unwrap();
                                 let conseq = args.next().unwrap();
                                 let alt = args.next().unwrap();
-                                let test_result = try!(self.eval(test));
+                                let test_result = try!(Env::eval(env, test));
                                 let exp = if !test_result.is_false() { conseq } else { alt };
-                                self.eval(exp)
+                                Env::eval(env, exp)
                             },
                             "lambda" => {
                                 let params = match args.next().unwrap() {
@@ -171,23 +195,22 @@ impl Env {
                                     _ => return Err("expected params to be a list".to_string()),
                                 };
                                 let body = args.next().unwrap();
-                                Ok(Val::Closure(Rc::new(self.clone()) /* Ack! */, params, Box::new(body)))
+                                Ok(Val::Closure(Rc::downgrade(env), params, Box::new(body)))
                             },
                             "define" => {
-                                let var = args.next().unwrap();
-                                let exp = args.next().unwrap();
-                                let var_name = match var {
+                                let name = match args.next().unwrap() {
                                     Val::Symbol(name) => name,
                                     _ => return Err("first arg to define must be a symbol".to_string()),
                                 };
-                                let exp_result = try!(self.eval(exp));
-                                self.define(var_name, exp_result);
+                                let val = args.next().unwrap();
+                                let val_result = try!(Env::eval(env, val));
+                                env.borrow_mut().define(name, val_result);
                                 Ok(Val::Bool(false))
                             },
                             // otherwise, call procedure
                             symbol => {
-                                let args = try!(self.eval_args(args));
-                                match self.access(symbol) {
+                                let args = try!(Env::eval_args(env, args));
+                                match env.borrow().access(symbol) {
                                     Some(val) => val.call(args),
                                     None => Err(format!("the function '{}' was not defined", symbol)),
                                 }

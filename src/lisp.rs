@@ -49,6 +49,16 @@ impl Proc {
     }
 }
 
+impl PartialEq for Proc {
+    fn eq(&self, other: &Proc) -> bool {
+        eq_bool(&Val::List(self.params), &Val::List(other.params)) && eq_bool(self.body, other.body)
+    }
+
+    fn ne(&self, other: &Proc) -> bool { 
+        !self.eq(other)
+    }
+}
+
 #[derive(Debug,Clone)]
 struct Env {
     vars: HashMap<String, Val>,
@@ -89,10 +99,6 @@ impl Env {
         }
     }
 }
-
-// lifetimes:
-// expressions are consumed by eval
-// vals are copied when storing to and accessing from the environment
 
 pub fn run() {
     let global_env = standard_env();
@@ -256,8 +262,9 @@ fn eval(val: Val, env: EnvRef) -> Val {
         Val::Symbol(x) => env.borrow().access(&x),
         Val::Number(_) => val,
         Val::Callable(_) => val,
-        Val::List(list) => {
-            let mut args = list;
+        Val::List(mut args) => {
+            if args.len() == 0 { return Val::List(args) };
+
             let proc_name_arg = args.remove(0);
 
             match proc_name_arg {
@@ -419,7 +426,11 @@ fn lte(a: Val, b: Val) -> Val {
 }
 
 fn eq(a: Val, b: Val) -> Val {
-    let result = match a {
+    bool_to_val(eq_bool(&a, &b))
+}
+
+fn eq_bool(a: &Val, b: &Val) -> bool {
+    match a {
         Val::Number(_) => {
             match b {
                 Val::Number(_) => value_of_number(&a) == value_of_number(&b),
@@ -434,22 +445,28 @@ fn eq(a: Val, b: Val) -> Val {
         },
         Val::List(ref a_value) => {
             match b {
-                Val::List(ref b_value) => ptr_eq(a_value, b_value),
+                Val::List(ref b_value) => {
+                    if a_value.len() != b_value.len() {
+                        false
+                    } else {
+                        for i in 0..a_value.len() {
+                            if !eq_bool(&a_value[i], &b_value[i]) { return false };
+                        };
+                        true
+                    }
+                },
                 _ => false,
             }
         },
         Val::Callable(ref a_value) => {
             match b {
-                Val::Callable(ref b_value) => ptr_eq(a_value, b_value),
+                Val::Callable(ref b_value) => a_value == b_value,
                 _ => false,
             }
         },
-    };
-    bool_to_val(result)
+    }
 }
 
 fn not(val: Val) -> Val {
     bool_to_val(!val_to_bool(val))
 }
-
-fn ptr_eq<T>(a: *const T, b: *const T) -> bool { a == b }

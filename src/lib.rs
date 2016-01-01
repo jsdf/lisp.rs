@@ -66,6 +66,20 @@ impl Val {
     }
 }
 
+impl PartialEq for Val {
+    fn eq(&self, other: &Val) -> bool {
+        match (self, other) {
+            (&Val::Bool(x), &Val::Bool(y)) => x == y,
+            (&Val::Number(x), &Val::Number(y)) => x == y,
+            (&Val::Symbol(ref x), &Val::Symbol(ref y)) => x == y,
+            (&Val::List(ref xs), &Val::List(ref ys)) => xs == ys,
+            (&Val::Closure(_, _, _), &Val::Closure(_, _, _)) => unimplemented!(),
+            (&Val::Intrinsic(f), &Val::Intrinsic(g)) => f == g,
+            (_, _) => false,
+        }
+    }
+}
+
 impl fmt::Display for Val {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -267,12 +281,16 @@ impl<'a> Parser<'a> {
         self.current.chars().next()
     }
 
+    fn advance_to_end(&mut self) {
+        self.byte_pos = self.src.len();
+        self.current = "";
+    }
+
     fn advance_bytes(&mut self, n: usize) {
         self.byte_pos += n;
 
         if self.is_eof() {
-            self.byte_pos = self.src.len();
-            self.current = "";
+            self.advance_to_end();
         } else {
             self.current = &self.current[n..];
         }
@@ -298,23 +316,16 @@ impl<'a> Parser<'a> {
                 self.advance_bytes(pos);
                 slice
             },
-            None => "",
+            None => {
+                let consumed = self.current;
+                self.advance_to_end();
+                consumed
+            },
         }
     }
 
-    fn skip_while<F: Fn(char) -> bool>(&mut self, f: F) -> bool {
-        let char_index = self.current.char_indices()
-            .skip_while(|&(_, ch)| f(ch))
-            .next();
-
-        match char_index {
-            Some((pos, _)) => { self.advance_bytes(pos); true },
-            None => false,
-        }
-    }
-
-    fn skip_whitespace(&mut self) -> bool {
-        self.skip_while(char::is_whitespace)
+    fn skip_whitespace(&mut self) {
+        self.consume_while(char::is_whitespace);
     }
 
     fn parse_value(&mut self) -> ParseResult<Val> {
@@ -359,5 +370,50 @@ impl<'a> Parser<'a> {
                 Err(_) => Ok(Val::Symbol(atom.to_string())),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_parse_bool() {
+        assert_eq!(Val::from_str("#t"), Ok(Val::Bool(true)));
+        assert_eq!(Val::from_str("#f"), Ok(Val::Bool(false)));
+    }
+
+    #[test]
+    fn test_parse_number() {
+        assert_eq!(Val::from_str("2.3"), Ok(Val::Number(2.3)));
+    }
+
+    #[test]
+    fn test_parse_symbol() {
+        assert!(Val::from_str("").is_err());
+        assert_eq!(Val::from_str("a"), Ok(Val::Symbol("a".to_string())));
+        assert_eq!(Val::from_str("hi"), Ok(Val::Symbol("hi".to_string())));
+    }
+
+    #[test]
+    fn test_parse_list_flattened() {
+        assert_eq!(Val::from_str("(a)"), Ok(Val::List(vec![Val::Symbol("a".to_string())])));
+        assert_eq!(Val::from_str("(2.3)"), Ok(Val::List(vec![Val::Number(2.3)])));
+        assert_eq!(Val::from_str("(a 2.3)"), Ok(Val::List(vec![Val::Symbol("a".to_string()), Val::Number(2.3)])));
+    }
+
+    #[test]
+    fn test_parse_list_nested() {
+        assert_eq!(Val::from_str("(a () ((123) (a #t)))"),
+            Ok(Val::List(vec![
+                Val::Symbol("a".to_string()),
+                Val::List(vec![]),
+                Val::List(vec![
+                    Val::List(vec![Val::Number(123.0)]),
+                    Val::List(vec![Val::Symbol("a".to_string()), Val::Bool(true)]),
+                ]),
+            ]))
+        );
     }
 }

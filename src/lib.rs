@@ -227,6 +227,17 @@ impl Env {
     }
 }
 
+impl fmt::Display for Env {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for (name, val) in &self.vars {
+            try!(writeln!(f, "{}\t{}", name, val));
+        }
+        self.parent.as_ref()
+            .and_then(Weak::upgrade)
+            .map_or(Ok(()), |parent| write!(f, "{}", *parent.borrow()))
+    }
+}
+
 type ParseResult<T> = Result<T, String>;
 
 impl FromStr for Val {

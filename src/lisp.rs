@@ -269,7 +269,7 @@ fn eval(val: Val, env: EnvRef) -> Val {
                             let conseq = args.remove(0);
                             let alt = args.remove(0);
                             let test_result = eval(test, env.clone());
-                            let exp = if !is_false(test_result) { conseq } else { alt };
+                            let exp = if val_to_bool(test_result) { conseq } else { alt };
                             eval(exp, env.clone())
                         },
                         "lambda" => {
@@ -328,7 +328,7 @@ fn call_proc(proc_name: &String, mut args: Vec<Val>, env: EnvRef) -> Val {
             }
         },
         _ => {
-            match eval(Val::Symbol(proc_name.to_string()), env) {
+            match eval(Val::Symbol(proc_name.to_owned()), env) {
                 Val::Callable(proc_to_call) => proc_to_call.call(args),
                 _ => panic!("expected {} to be callable", proc_name),
             }
@@ -339,12 +339,8 @@ fn call_proc(proc_name: &String, mut args: Vec<Val>, env: EnvRef) -> Val {
 fn apply_arithmetic<F: Fn(f64, f64) -> f64>(args: Vec<Val>, operator: F) -> Val {
     let mut accumulated: f64 = 0f64;
     for i in 0..args.len() {
-        accumulated = match args[i] {
-            Val::Number(operand) => {
-                if i == 0 { operand } else { operator(accumulated, operand) }
-            },
-            _ => panic!("args to arithmetic functions must be Numbers"),
-        };
+        let operand = value_of_number(&args[i]);
+        accumulated = if i == 0 { operand } else { operator(accumulated, operand) };
     };
     Val::Number(accumulated)
 }
@@ -381,57 +377,79 @@ fn apply2<F: Fn(Val, Val) -> Val>(args: Vec<Val>, func: F) -> Val {
     }
 }
 
-fn bool_to_symbol(x: bool) -> Val {
+fn bool_to_val(x: bool) -> Val {
     if x { symbol_true() } else { symbol_false() }
 }
 
-fn extract_number(val: Val) -> f64 {
+fn val_to_bool(val: Val) -> bool {
     match val {
-        Val::Number(x) => x,
+        Val::Symbol(x) => !(x == "#f"),
+        _ => true,
+    }
+}
+
+fn value_of_number(val: &Val) -> f64 {
+    match *val {
+        Val::Number(ref x) => x.clone(),
         _ => panic!("expected a Number"),
     }
 }
 
-fn extract_symbol(val: Val) -> String {
-    match val {
-        Val::Symbol(x) => x,
+fn value_of_symbol(val: &Val) -> String {
+    match *val {
+        Val::Symbol(ref x) => x.clone(),
         _ => panic!("expected a Symbol"),
     }
 }
 
 fn gt(a: Val, b: Val) -> Val {
-    bool_to_symbol(extract_number(a) > extract_number(b))
+    bool_to_val(value_of_number(&a) > value_of_number(&b))
 }
 
 fn lt(a: Val, b: Val) -> Val {
-    bool_to_symbol(extract_number(a) < extract_number(b))
+    bool_to_val(value_of_number(&a) < value_of_number(&b))
 }
 
 fn gte(a: Val, b: Val) -> Val {
-    bool_to_symbol(extract_number(a) >= extract_number(b))
+    bool_to_val(value_of_number(&a) >= value_of_number(&b))
 }
 
 fn lte(a: Val, b: Val) -> Val {
-    bool_to_symbol(extract_number(a) <= extract_number(b))
+    bool_to_val(value_of_number(&a) <= value_of_number(&b))
 }
 
 fn eq(a: Val, b: Val) -> Val {
-    match a {
-        Val::Symbol(_) => bool_to_symbol(extract_symbol(a) == extract_symbol(b)),
-        Val::Number(_) => bool_to_symbol(extract_number(a) == extract_number(b)),
-        Val::List(_) => panic!("equality operator not implemented for List :("),
-        Val::Callable(_) => panic!("equality operator not implemented for Callable :("),
-    }
-}
-
-fn is_false(val: Val) -> bool {
-    match val {
-        Val::Symbol(x) => x == "#f",
-        _ => false,
-    }
+    let result = match a {
+        Val::Number(_) => {
+            match b {
+                Val::Number(_) => value_of_number(&a) == value_of_number(&b),
+                _ => false,
+            }
+        },
+        Val::Symbol(_) => {
+            match b {
+                Val::Symbol(_) => value_of_symbol(&a) == value_of_symbol(&b),
+                _ => false,
+            }
+        },
+        Val::List(ref a_value) => {
+            match b {
+                Val::List(ref b_value) => ptr_eq(a_value, b_value),
+                _ => false,
+            }
+        },
+        Val::Callable(ref a_value) => {
+            match b {
+                Val::Callable(ref b_value) => ptr_eq(a_value, b_value),
+                _ => false,
+            }
+        },
+    };
+    bool_to_val(result)
 }
 
 fn not(val: Val) -> Val {
-    let boolean_value = !is_false(val);
-    bool_to_symbol(!boolean_value)
+    bool_to_val(!val_to_bool(val))
 }
+
+fn ptr_eq<T>(a: *const T, b: *const T) -> bool { a == b }

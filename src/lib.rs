@@ -223,9 +223,11 @@ impl Env {
                             },
                             // otherwise, call procedure
                             symbol => {
-                                let args = try!(Env::eval_args(env, args));
                                 match env.borrow().access(symbol) {
-                                    Some(val) => val.call(args),
+                                    Some(val) => {
+                                        let args = try!(Env::eval_args(env, args));
+                                        val.call(args)
+                                    },
                                     None => Err(format!("the function '{}' was not defined", symbol)),
                                 }
                             },

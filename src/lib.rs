@@ -177,60 +177,76 @@ impl Env {
             .fold_results(vec![], |mut acc, x| { acc.push(x); acc })
     }
 
+    fn eval_if<I>(env: &mut Rc<EnvCell>, mut args: I) -> EvalResult<Val> where
+        I: Iterator<Item = Val>,
+    {
+        let test = args.next().unwrap();
+        let conseq = args.next().unwrap();
+        let alt = args.next().unwrap();
+        let test_result = try!(Env::eval(env, test));
+        let exp = if !test_result.is_false() { conseq } else { alt };
+        Env::eval(env, exp)
+    }
+
+    fn eval_lambda<I>(env: &mut Rc<EnvCell>, mut args: I) -> EvalResult<Val> where
+        I: Iterator<Item = Val>,
+    {
+        let params = match args.next().unwrap() {
+            Val::List(x) => try! {
+                x.iter()
+                    .map(Val::extract_symbol)
+                    .fold_results(vec![], |mut acc, x| { acc.push(x.to_string()); acc })
+            },
+            _ => return Err("expected params to be a list".to_string()),
+        };
+        let body = args.next().unwrap();
+        Ok(Val::Closure(Rc::downgrade(env), params, Box::new(body)))
+    }
+
+    fn eval_define<I>(env: &mut Rc<EnvCell>, mut args: I) -> EvalResult<Val> where
+        I: Iterator<Item = Val>,
+    {
+        let name = match args.next().unwrap() {
+            Val::Symbol(name) => name,
+            _ => return Err("first arg to define must be a symbol".to_string()),
+        };
+        let val = args.next().unwrap();
+        let val_result = try!(Env::eval(env, val));
+        env.borrow_mut().define(name, val_result);
+        Ok(Val::Bool(false))
+    }
+
+    fn eval_call<I>(env: &mut Rc<EnvCell>, symbol: &str, args: I) -> EvalResult<Val> where
+        I: Iterator<Item = Val>,
+    {
+        let f = env.borrow().access(symbol);
+        match f {
+            Some(val) => {
+                let args = try!(Env::eval_args(env, args));
+                val.call(args)
+            },
+            None => Err(format!("the function '{}' was not defined", symbol)),
+        }
+    }
+
     pub fn eval(env: &mut Rc<EnvCell>, val: Val) -> EvalResult<Val> {
         match val {
             Val::Bool(_) => Ok(val),
             Val::Number(_) => Ok(val),
             Val::Symbol(x) => match env.borrow().access(&x) {
-                Some(value) => Ok(value.clone()),
+                Some(value) => Ok(value),
                 None => Err(format!("can't access undefined variable '{}'", x)),
             },
             Val::List(list) => {
                 let mut args = list.into_iter();
                 match args.next() {
                     Some(Val::Symbol(symbol)) => {
-                        match symbol.trim() {
+                        match symbol.as_ref() {
                             "quote" => Ok(args.next().unwrap()),
-                            "if" => {
-                                let test = args.next().unwrap();
-                                let conseq = args.next().unwrap();
-                                let alt = args.next().unwrap();
-                                let test_result = try!(Env::eval(env, test));
-                                let exp = if !test_result.is_false() { conseq } else { alt };
-                                Env::eval(env, exp)
-                            },
-                            "lambda" => {
-                                let params = match args.next().unwrap() {
-                                    Val::List(x) => try! {
-                                        x.iter()
-                                            .map(Val::extract_symbol)
-                                            .fold_results(vec![], |mut acc, x| { acc.push(x.to_string()); acc })
-                                    },
-                                    _ => return Err("expected params to be a list".to_string()),
-                                };
-                                let body = args.next().unwrap();
-                                Ok(Val::Closure(Rc::downgrade(env), params, Box::new(body)))
-                            },
-                            "define" => {
-                                let name = match args.next().unwrap() {
-                                    Val::Symbol(name) => name,
-                                    _ => return Err("first arg to define must be a symbol".to_string()),
-                                };
-                                let val = args.next().unwrap();
-                                let val_result = try!(Env::eval(env, val));
-                                env.borrow_mut().define(name, val_result);
-                                Ok(Val::Bool(false))
-                            },
-                            // otherwise, call procedure
-                            symbol => {
-                                match env.borrow().access(symbol) {
-                                    Some(val) => {
-                                        let args = try!(Env::eval_args(env, args));
-                                        val.call(args)
-                                    },
-                                    None => Err(format!("the function '{}' was not defined", symbol)),
-                                }
-                            },
+                            "if" => Env::eval_if(env, args),
+                            "lambda" => Env::eval_lambda(env, args),
+                            "define" => Env::eval_define(env, args),
+                            symbol => Env::eval_call(env, symbol, args),
                         }
                     },
                     Some(val) => {

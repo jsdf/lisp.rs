@@ -94,6 +94,13 @@ impl fmt::Display for Val {
     }
 }
 
+fn map_collect_results<T, I, F>(it: I, f: F) -> EvalResult<Vec<T>> where
+    I: IntoIterator,
+    F: FnMut(I::Item) -> EvalResult<T>,
+{
+    it.into_iter().map(f).fold_results(vec![], |mut acc, x| { acc.push(x); acc })
+}
+
 pub type EnvCell = RefCell<Env>;
 
 #[derive(Debug, Clone)]
@@ -172,9 +179,7 @@ impl Env {
     }
 
     fn eval_args<I: IntoIterator<Item = Val>>(env: &mut Rc<EnvCell>, args: I) -> EvalResult<Vec<Val>> {
-        args.into_iter()
-            .map(|arg| Env::eval(env, arg))
-            .fold_results(vec![], |mut acc, x| { acc.push(x); acc })
+        map_collect_results(args, |arg| Env::eval(env, arg))
     }
 
     fn eval_if<I>(env: &mut Rc<EnvCell>, mut args: I) -> EvalResult<Val> where
@@ -192,10 +197,8 @@ impl Env {
         I: Iterator<Item = Val>,
     {
         let params = match args.next().unwrap() {
-            Val::List(x) => try! {
-                x.iter()
-                    .map(Val::extract_symbol)
-                    .fold_results(vec![], |mut acc, x| { acc.push(x.to_string()); acc })
+            Val::List(params) => try! {
+                map_collect_results(params, |x| x.extract_symbol().map(str::to_string))
             },
             _ => return Err("expected params to be a list".to_string()),
         };

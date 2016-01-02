@@ -231,8 +231,12 @@ impl Env {
                             },
                         }
                     },
-                    // TODO: anonymous closures
-                    Some(_) | None => Err("unknown list form".to_string()),
+                    Some(val) => {
+                        let f = try!(Env::eval(env, val));
+                        let args = try!(Env::eval_args(env, args));
+                        f.call(args)
+                    },
+                    None => Err("unknown list form".to_string()),
                 }
             },
             Val::Closure(..) => Ok(val),

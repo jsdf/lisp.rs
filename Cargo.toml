@@ -3,3 +3,13 @@
 name = "lisp_rs"
 version = "0.0.1"
 authors = [ "James Friend <jamesf@jsdf.co>" ]
+
+[dependencies]
+itertools = "0.4"
+linenoise-rust = "0.1.14"
+
+[lib]
+name = "lisp"
+
+[[bin]]
+name = "repl"
